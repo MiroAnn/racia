@@ -152,7 +152,7 @@ function fbListen(room,path,cb) {
   return es;
 }
 
-// ── Комната ──────────────────────────────────────────────────────────────────
+// ── Комната и режим ──────────────────────────────────────────────────────────
 const P = new URLSearchParams(window.location.search);
 let room = P.get('room');
 if (!room) {
@@ -160,6 +160,9 @@ if (!room) {
   const u = new URL(location.href); u.searchParams.set('room',room); history.replaceState({},'',u);
 }
 $('m-room').textContent = room;
+
+// Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
+const OPEN_MODE = P.get('open') === '1';
 
 function copyLink() {
   navigator.clipboard.writeText(location.href).then(()=>{
@@ -465,7 +468,12 @@ async function startApp(initialName) {
   renderList();
   setStatus('Онлайн: 1 чел.');
 
-  // ── PTT ──────────────────────────────────────────────────────────────────
+  // Текст подсказки зависит от режима
+  const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы начать говорить' : 'Удерживай кнопку чтобы говорить';
+  const HINT_TALK = OPEN_MODE ? 'Нажми чтобы замолчать'       : 'Отпусти, чтобы замолчать';
+  $('m-hint').textContent = HINT_IDLE;
+
+  // ── PTT / Open-mode ──────────────────────────────────────────────────────
   async function startTalk() {
     if(talking||tbtn.disabled)return;
     try {
@@ -495,7 +503,7 @@ async function startApp(initialName) {
       }
 
       tryPlayAll(); // разблокируем воспроизведение (user gesture)
-      talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent='Отпусти, чтобы замолчать';
+      talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent=HINT_TALK;
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
     } catch(e){ toast('Нет доступа к микрофону'); }
@@ -503,17 +511,26 @@ async function startApp(initialName) {
   function stopTalk() {
     if(!talking)return;
     if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=false);
-    talking=false; tbtn.classList.remove('pressing'); $('m-hint').textContent='Удерживай кнопку чтобы говорить';
+    talking=false; tbtn.classList.remove('pressing'); $('m-hint').textContent=HINT_IDLE;
     if(presence[myUid])presence[myUid].speaking=false; renderList();
     fbDel(room,'talking/'+myUid); setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
-  tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
-  tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
-  tbtn.addEventListener('mouseup',    stopTalk);
-  tbtn.addEventListener('touchend',   e=>{e.preventDefault();stopTalk();},{passive:false});
-  tbtn.addEventListener('mouseleave', stopTalk);
-  tbtn.addEventListener('touchcancel',stopTalk);
+  if (OPEN_MODE) {
+    // Открытый режим: кнопка-переключатель (один тап = включить, второй = выключить)
+    tbtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (talking) stopTalk(); else startTalk();
+    });
+  } else {
+    // PTT: удерживай кнопку
+    tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
+    tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
+    tbtn.addEventListener('mouseup',    stopTalk);
+    tbtn.addEventListener('touchend',   e=>{e.preventDefault();stopTalk();},{passive:false});
+    tbtn.addEventListener('mouseleave', stopTalk);
+    tbtn.addEventListener('touchcancel',stopTalk);
+  }
 
   mbtn.addEventListener('click',()=>{
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
