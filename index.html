@@ -4,540 +4,584 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>🏔️ Рация</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- Agora RTC (аудио) + RTM (имена / присутствие) -->
+  <script src="https://unpkg.com/agora-rtc-sdk-ng@4.20.0/AgoraRTC_N.js"></script>
+  <script src="https://unpkg.com/agora-rtm-sdk@1.5.1/libs/agora-rtm-sdk-1.5.1.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg:      #0d0d1a;
-      --card:    #161628;
-      --green:   #00d46a;
-      --red:     #ff3b30;
-      --blue:    #4a9eff;
-      --text:    #ffffff;
-      --muted:   #6b7280;
-      --border:  #1f1f38;
+      --bg:    #0d0d1a;
+      --card:  #161628;
+      --green: #00d46a;
+      --red:   #ff3b30;
+      --blue:  #4a9eff;
+      --text:  #ffffff;
+      --muted: #6b7280;
     }
-
-    html, body {
-      height: 100%;
-      overflow: hidden;
-    }
-
+    html, body { height: 100%; background: var(--bg); color: var(--text); }
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      padding: 36px 24px 40px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
     }
 
-    /* ── Header ── */
-    .header {
-      width: 100%;
-      text-align: center;
-    }
-
-    .logo {
-      font-size: 2rem;
-      margin-bottom: 4px;
-    }
-
-    .title {
-      font-size: 1.25rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      color: var(--text);
-    }
-
-    .room-row {
-      margin-top: 10px;
-      display: flex;
+    /* ════ Общий экран ════ */
+    .screen {
+      display: none;
+      min-height: 100vh;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      padding: 32px 24px;
+    }
+    .screen.active { display: flex; }
+    .screen.scrollable { overflow-y: auto; touch-action: auto; }
+
+    .logo { font-size: 3rem; margin-bottom: 10px; }
+    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 6px; }
+    .sub { color: var(--muted); font-size: 0.85rem; text-align: center; line-height: 1.6; margin-bottom: 24px; }
+
+    /* Input */
+    .field {
+      width: 100%; max-width: 400px;
+      background: var(--card);
+      border: 1.5px solid #2a2a48;
+      border-radius: 14px;
+      color: var(--text);
+      font-size: 1rem;
+      padding: 15px 16px;
+      outline: none;
+      transition: border-color .2s;
+      margin-bottom: 10px;
+    }
+    .field:focus { border-color: var(--blue); }
+    .field::placeholder { color: var(--muted); }
+
+    /* Кнопка действия */
+    .btn-primary {
+      width: 100%; max-width: 400px;
+      padding: 16px;
+      border-radius: 14px; border: none;
+      background: linear-gradient(135deg, #4a9eff, #2979ff);
+      color: white; font-size: 1rem; font-weight: 700;
+      cursor: pointer; letter-spacing: .04em;
+      box-shadow: 0 6px 24px rgba(74,158,255,.3);
+      transition: opacity .15s;
+      margin-top: 4px;
+    }
+    .btn-primary:active { opacity: .82; }
+
+    /* Инструкция */
+    .steps {
+      background: var(--card); border-radius: 16px;
+      padding: 20px; width: 100%; max-width: 400px; margin-bottom: 20px;
+    }
+    .steps-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 14px; }
+    .step { display: flex; gap: 12px; margin-bottom: 10px; align-items: flex-start; }
+    .step-n {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: rgba(74,158,255,.15); color: var(--blue);
+      font-size: .8rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .step-t { font-size: .84rem; color: #ccc; line-height: 1.5; }
+    .step-t a { color: var(--blue); text-decoration: none; }
+    .step-t code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; font-size: .8rem; }
+
+    /* Поделиться */
+    .share-box {
+      display: none;
+      width: 100%; max-width: 400px;
+      background: rgba(0,212,106,.07);
+      border: 1.5px solid rgba(0,212,106,.22);
+      border-radius: 14px; padding: 16px; margin-top: 14px;
+    }
+    .share-box.visible { display: block; }
+    .share-label { font-size: .76rem; color: var(--green); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px; }
+    .share-url { font-size: .76rem; color: #aaa; word-break: break-all; line-height: 1.5; margin-bottom: 12px; }
+    .btn-copy {
+      width: 100%; padding: 10px; border-radius: 10px;
+      border: 1px solid rgba(0,212,106,.3); background: rgba(0,212,106,.1);
+      color: var(--green); font-size: .88rem; font-weight: 600; cursor: pointer; margin-bottom: 8px;
+    }
+    .btn-open {
+      width: 100%; padding: 10px; border-radius: 10px;
+      border: none; background: var(--green);
+      color: #000; font-size: .88rem; font-weight: 700; cursor: pointer;
     }
 
-    .room-label {
-      color: var(--muted);
-      font-size: 0.82rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    .err { color: #ff6b6b; font-size: .82rem; text-align: center; margin-top: 8px; min-height: 1.2em; }
+
+    /* ════ Экран имени ════ */
+    #screen-name .name-wrap { width: 100%; max-width: 340px; }
+    #screen-name h1 { margin-bottom: 4px; }
+
+    /* ════ Главный экран ════ */
+    #screen-main {
+      height: 100vh;
+      justify-content: space-between;
+      padding: 32px 20px 36px;
+      overflow: hidden;
     }
 
+    /* Шапка */
+    .main-header { width: 100%; text-align: center; }
+    .main-logo { font-size: 1.6rem; margin-bottom: 2px; }
+    .main-title { font-size: 1.1rem; font-weight: 700; }
+    .room-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 6px; }
+    .room-lbl { color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; }
     .room-badge {
-      background: rgba(74, 158, 255, 0.12);
-      border: 1px solid rgba(74, 158, 255, 0.3);
-      color: var(--blue);
-      font-size: 0.9rem;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      padding: 3px 12px;
-      border-radius: 20px;
-      cursor: pointer;
-      transition: background 0.2s;
+      background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.28);
+      color: var(--blue); font-size: .82rem; font-weight: 700; letter-spacing: .1em;
+      padding: 2px 12px; border-radius: 20px; cursor: pointer;
     }
-    .room-badge:active { background: rgba(74, 158, 255, 0.22); }
-
-    .copy-hint {
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-top: 5px;
-      opacity: 0;
-      transition: opacity 0.3s;
-    }
+    .copy-hint { font-size: .7rem; color: var(--muted); margin-top: 3px; opacity: 0; transition: opacity .3s; height: .9em; }
     .copy-hint.visible { opacity: 1; }
 
-    /* ── Presence ── */
-    .presence {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 14px;
+    /* Список участников */
+    .participants {
+      width: 100%; max-width: 360px;
+      display: flex; flex-direction: column; gap: 8px;
+      max-height: 36vh; overflow-y: auto;
     }
-
-    .dots-row {
-      display: flex;
-      gap: 14px;
-      align-items: center;
+    .p-item {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--card); border-radius: 12px;
+      padding: 11px 16px;
+      border: 1.5px solid transparent;
+      transition: border-color .2s, background .2s;
     }
-
-    .dot {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: #2a2a40;
-      border: 2px solid #2a2a40;
-      transition: background 0.3s, transform 0.2s, box-shadow 0.3s, border-color 0.3s;
+    .p-item.speaking {
+      background: rgba(255,59,48,.07);
+      border-color: rgba(255,59,48,.25);
     }
-
-    .dot.me {
-      background: var(--green);
-      border-color: var(--green);
-      box-shadow: 0 0 10px rgba(0, 212, 106, 0.5);
+    .p-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+      transition: background .25s, transform .2s, box-shadow .25s;
     }
+    .p-dot.me      { background: var(--green); box-shadow: 0 0 8px rgba(0,212,106,.5); }
+    .p-dot.online  { background: var(--blue);  box-shadow: 0 0 6px rgba(74,158,255,.4); }
+    .p-dot.speaking { background: var(--red); transform: scale(1.4); box-shadow: 0 0 10px rgba(255,59,48,.6); animation: blink .75s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-    .dot.online {
-      background: var(--blue);
-      border-color: var(--blue);
-      box-shadow: 0 0 8px rgba(74, 158, 255, 0.4);
-    }
+    .p-name { font-size: .95rem; font-weight: 600; flex: 1; }
+    .p-me-tag { font-size: .72rem; color: var(--muted); }
+    .p-speaking-tag { font-size: .72rem; color: var(--red); }
 
-    .dot.speaking {
-      background: var(--red);
-      border-color: var(--red);
-      transform: scale(1.6);
-      box-shadow: 0 0 16px rgba(255, 59, 48, 0.7);
-    }
+    .status-line { font-size: .84rem; color: var(--muted); text-align: center; margin-top: 6px; }
+    .status-line.tx { color: var(--red); font-weight: 600; }
 
-    .status-line {
-      font-size: 0.9rem;
-      color: var(--muted);
-      text-align: center;
-      min-height: 1.3em;
-      transition: color 0.2s;
-    }
-
-    .status-line.active {
-      color: var(--red);
-      font-weight: 600;
-      animation: blink 0.9s ease-in-out infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.45; }
-    }
-
-    /* ── Talk button ── */
-    .talk-wrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 18px;
-    }
-
+    /* TALK */
+    .talk-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
     #talk-btn {
-      width: 200px;
-      height: 200px;
-      border-radius: 50%;
-      border: none;
-      outline: none;
-      cursor: pointer;
+      width: 190px; height: 190px; border-radius: 50%;
+      border: none; outline: none; cursor: pointer;
       -webkit-tap-highlight-color: transparent;
-
       background: radial-gradient(circle at 38% 35%, #00e87a, #00a84f);
       box-shadow:
-        0 0 0 8px rgba(0, 212, 106, 0.08),
-        0 0 0 16px rgba(0, 212, 106, 0.04),
-        0 12px 40px rgba(0, 212, 106, 0.35),
-        inset 0 2px 0 rgba(255,255,255,0.18),
-        inset 0 -4px 8px rgba(0,0,0,0.25);
-
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-
-      transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.1s;
+        0 0 0 10px rgba(0,212,106,.07),
+        0 0 0 20px rgba(0,212,106,.03),
+        0 10px 36px rgba(0,212,106,.35),
+        inset 0 2px 0 rgba(255,255,255,.18),
+        inset 0 -4px 8px rgba(0,0,0,.25);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+      transition: transform .08s, box-shadow .08s, background .1s;
     }
-
     #talk-btn:disabled {
-      background: radial-gradient(circle at 38% 35%, #2e2e48, #1e1e32);
-      box-shadow:
-        0 6px 20px rgba(0,0,0,0.4),
-        inset 0 2px 0 rgba(255,255,255,0.04);
+      background: radial-gradient(circle at 38% 35%, #252540, #181830);
+      box-shadow: 0 6px 20px rgba(0,0,0,.4);
       cursor: not-allowed;
     }
-
     #talk-btn.pressing {
       background: radial-gradient(circle at 38% 35%, #ff5f55, #cc2e24);
       box-shadow:
-        0 0 0 8px rgba(255, 59, 48, 0.1),
-        0 0 0 16px rgba(255, 59, 48, 0.05),
-        0 8px 30px rgba(255, 59, 48, 0.5),
-        inset 0 2px 0 rgba(255,255,255,0.12),
-        inset 0 -4px 8px rgba(0,0,0,0.3);
-      transform: scale(0.95);
+        0 0 0 10px rgba(255,59,48,.1),
+        0 0 0 20px rgba(255,59,48,.04),
+        0 8px 28px rgba(255,59,48,.5),
+        inset 0 2px 0 rgba(255,255,255,.12),
+        inset 0 -4px 8px rgba(0,0,0,.3);
+      transform: scale(.95);
     }
+    .btn-icon  { font-size: 2.2rem; pointer-events: none; }
+    .btn-lbl   { font-size: 1rem; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.95); pointer-events: none; }
+    .talk-hint { color: var(--muted); font-size: .82rem; text-align: center; }
 
-    .btn-icon {
-      font-size: 2.4rem;
-      line-height: 1;
-      pointer-events: none;
-    }
-
-    .btn-label {
-      font-size: 1.05rem;
-      font-weight: 800;
-      letter-spacing: 0.18em;
-      color: rgba(255,255,255,0.95);
-      pointer-events: none;
-    }
-
-    .talk-hint {
-      color: var(--muted);
-      font-size: 0.85rem;
-      text-align: center;
-      line-height: 1.5;
-    }
-
-    /* ── Bottom controls ── */
-    .controls {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
+    /* Mute */
     #mute-btn {
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      border: 2px solid var(--border);
-      background: var(--card);
-      color: var(--text);
-      font-size: 1.5rem;
-      cursor: pointer;
-      outline: none;
+      width: 58px; height: 58px; border-radius: 50%;
+      border: 2px solid #1f1f38; background: var(--card);
+      color: white; font-size: 1.4rem; cursor: pointer; outline: none;
       -webkit-tap-highlight-color: transparent;
-      transition: background 0.2s, border-color 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .2s, border-color .2s;
     }
+    #mute-btn.muted { border-color: var(--red); background: rgba(255,59,48,.12); }
 
-    #mute-btn.muted {
-      border-color: var(--red);
-      background: rgba(255, 59, 48, 0.1);
-    }
-
-    /* ── Toast ── */
+    /* Toast */
     #toast {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
+      position: fixed; bottom: 24px; left: 50%;
       transform: translateX(-50%) translateY(60px);
-      background: rgba(255,255,255,0.12);
-      backdrop-filter: blur(12px);
+      background: rgba(255,255,255,.12); backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.1);
-      color: white;
-      padding: 10px 20px;
-      border-radius: 20px;
-      font-size: 0.85rem;
-      transition: transform 0.3s ease;
-      pointer-events: none;
-      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,.1);
+      color: white; padding: 10px 20px; border-radius: 20px;
+      font-size: .84rem; transition: transform .3s; pointer-events: none; white-space: nowrap;
     }
-
-    #toast.show {
-      transform: translateX(-50%) translateY(0);
-    }
-
-    #audio-container { display: none; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
 
-  <!-- Header -->
-  <div class="header">
-    <div class="logo">🏔️</div>
-    <div class="title">Рация</div>
+<!-- ════════════ НАСТРОЙКА ════════════ -->
+<div id="screen-setup" class="screen scrollable">
+  <div class="logo">🏔️</div>
+  <h1>Рация для горы</h1>
+  <p class="sub">Нужен бесплатный Agora App ID — один раз,<br>потом просто шаришь ссылку</p>
+
+  <div class="steps">
+    <div class="steps-title">Получи App ID бесплатно</div>
+    <div class="step">
+      <div class="step-n">1</div>
+      <div class="step-t">Открой <a href="https://console.agora.io" target="_blank">console.agora.io</a> → зарегистрируйся</div>
+    </div>
+    <div class="step">
+      <div class="step-n">2</div>
+      <div class="step-t">Нажми <code>Create Project</code> → режим <code>Testing</code></div>
+    </div>
+    <div class="step">
+      <div class="step-n">3</div>
+      <div class="step-t">Скопируй <code>App ID</code> (32 символа) и вставь ниже</div>
+    </div>
+  </div>
+
+  <input class="field" id="s-appid" type="text" placeholder="App ID" autocomplete="off" autocorrect="off" spellcheck="false" style="max-width:400px">
+  <input class="field" id="s-room"  type="text" placeholder="Название комнаты (например: snow2025)" autocomplete="off" style="max-width:400px">
+  <button class="btn-primary" id="s-create">Создать комнату →</button>
+  <div class="err" id="s-err"></div>
+
+  <div class="share-box" id="s-share">
+    <div class="share-label">✓ Комната готова</div>
+    <div class="share-url" id="s-url"></div>
+    <button class="btn-copy" id="s-copy">📋 Скопировать ссылку</button>
+    <button class="btn-open" id="s-open">Открыть рацию →</button>
+  </div>
+</div>
+
+<!-- ════════════ ИМЯ ════════════ -->
+<div id="screen-name" class="screen">
+  <div class="logo">🏔️</div>
+  <h1>Как тебя зовут?</h1>
+  <p class="sub">Друзья увидят твоё имя в комнате</p>
+  <div class="name-wrap">
+    <input class="field" id="n-name" type="text" placeholder="Твоё имя" autocomplete="given-name" maxlength="20" style="text-align:center;font-size:1.1rem;">
+    <button class="btn-primary" id="n-join">Войти в комнату →</button>
+    <div class="err" id="n-err"></div>
+  </div>
+</div>
+
+<!-- ════════════ ГЛАВНЫЙ ════════════ -->
+<div id="screen-main" class="screen">
+
+  <div class="main-header">
+    <div class="main-logo">🏔️</div>
+    <div class="main-title">Рация</div>
     <div class="room-row">
-      <span class="room-label">Комната</span>
-      <span class="room-badge" id="room-code" title="Нажми — скопировать ссылку">—</span>
+      <span class="room-lbl">Комната</span>
+      <span class="room-badge" id="m-room">—</span>
     </div>
-    <div class="copy-hint" id="copy-hint">✓ Ссылка скопирована</div>
+    <div class="copy-hint" id="m-copy-hint">✓ Ссылка скопирована</div>
   </div>
 
-  <!-- Presence -->
-  <div class="presence">
-    <div class="dots-row">
-      <div class="dot" id="dot-0"></div>
-      <div class="dot" id="dot-1"></div>
-      <div class="dot" id="dot-2"></div>
-      <div class="dot" id="dot-3"></div>
-      <div class="dot" id="dot-4"></div>
-    </div>
-    <div class="status-line" id="status-line">Подключение…</div>
+  <!-- Участники -->
+  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;">
+    <div class="participants" id="m-participants"></div>
+    <div class="status-line" id="m-status">Подключение…</div>
   </div>
 
-  <!-- Talk button -->
+  <!-- TALK -->
   <div class="talk-wrap">
     <button id="talk-btn" disabled>
       <div class="btn-icon">🎙️</div>
-      <div class="btn-label">TALK</div>
+      <div class="btn-lbl">TALK</div>
     </button>
-    <div class="talk-hint" id="talk-hint">Удерживай кнопку чтобы говорить</div>
+    <div class="talk-hint" id="m-hint">Удерживай кнопку чтобы говорить</div>
   </div>
 
-  <!-- Bottom -->
-  <div class="controls">
-    <button id="mute-btn" title="Звук">🔊</button>
-  </div>
+  <button id="mute-btn">🔊</button>
+</div>
 
-  <div id="audio-container"></div>
-  <div id="toast"></div>
+<div id="toast"></div>
 
 <script>
-// ── Room ID ──────────────────────────────────────────────────────────────────
-const params = new URLSearchParams(window.location.search);
-let roomId = params.get('room');
-if (!roomId) {
-  roomId = Math.random().toString(36).slice(2, 8).toUpperCase();
-  const u = new URL(window.location.href);
-  u.searchParams.set('room', roomId);
-  window.history.replaceState({}, '', u.toString());
-}
-document.getElementById('room-code').textContent = roomId;
-
-// Copy room link on tap
-document.getElementById('room-code').addEventListener('click', () => {
-  const url = new URL(window.location.href);
-  url.searchParams.set('room', roomId);
-  navigator.clipboard.writeText(url.toString()).then(() => {
-    const hint = document.getElementById('copy-hint');
-    hint.classList.add('visible');
-    setTimeout(() => hint.classList.remove('visible'), 2000);
-  });
-});
-
-// ── State ────────────────────────────────────────────────────────────────────
-const MAX   = 5;
-let mySlot  = null;
-let peer    = null;
-let muted   = false;
-let talking = false;
-let stream  = null;
-let calls   = [];
-const dataConns   = {};   // slot → DataConnection
-const remoteAudio = {};   // peerId → <audio>
-
-// ── DOM ──────────────────────────────────────────────────────────────────────
-const talkBtn  = document.getElementById('talk-btn');
-const muteBtn  = document.getElementById('mute-btn');
-const statusEl = document.getElementById('status-line');
-const hintEl   = document.getElementById('talk-hint');
-
-function setStatus(text, isTransmit = false) {
-  statusEl.textContent = text;
-  statusEl.classList.toggle('active', isTransmit);
-}
-
+// ── Утилиты ──────────────────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function show(id) { $(id).classList.add('active'); }
+function hide(id) { $(id).classList.remove('active'); }
 function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
+  const el = $('toast');
+  el.textContent = msg; el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-function refreshDots() {
-  const total = Object.keys(dataConns).length + 1;
-  for (let i = 0; i < MAX; i++) {
-    const dot = document.getElementById('dot-' + i);
-    dot.className = 'dot';
-    if (i === mySlot)      dot.classList.add('me');
-    else if (dataConns[i]) dot.classList.add('online');
+// ── Параметры URL ────────────────────────────────────────────────────────────
+const params   = new URLSearchParams(window.location.search);
+const urlAppId = params.get('appid') || '';
+const urlRoom  = params.get('room')  || '';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ЭКРАН НАСТРОЙКИ
+// ══════════════════════════════════════════════════════════════════════════════
+let generatedUrl = '';
+
+$('s-create').addEventListener('click', () => {
+  $('s-err').textContent = '';
+  const aid  = $('s-appid').value.trim();
+  const room = $('s-room').value.trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\-_]/g,'').toLowerCase();
+  if (!aid || aid.length < 10) { $('s-err').textContent = 'Введи App ID из Agora Console'; return; }
+  if (!room)                    { $('s-err').textContent = 'Введи название комнаты'; return; }
+  const u = new URL(window.location.href);
+  u.searchParams.set('appid', aid);
+  u.searchParams.set('room', room);
+  generatedUrl = u.toString();
+  $('s-url').textContent = generatedUrl;
+  $('s-share').classList.add('visible');
+});
+$('s-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(generatedUrl).then(() => {
+    $('s-copy').textContent = '✓ Скопировано!';
+    setTimeout(() => { $('s-copy').textContent = '📋 Скопировать ссылку'; }, 2000);
+  });
+});
+$('s-open').addEventListener('click', () => { window.location.href = generatedUrl; });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// МАРШРУТИЗАЦИЯ
+// ══════════════════════════════════════════════════════════════════════════════
+if (urlAppId && urlRoom) {
+  show('screen-name');
+  // Фокус на поле имени с небольшой задержкой
+  setTimeout(() => $('n-name').focus(), 300);
+} else {
+  show('screen-setup');
+}
+
+// ── Экран имени ──────────────────────────────────────────────────────────────
+function proceedWithName() {
+  const raw  = $('n-name').value.trim();
+  const name = raw.replace(/[_]{2,}/g, '_').slice(0, 20); // sanitize __ separator
+  if (!name) { $('n-err').textContent = 'Введи имя'; return; }
+  hide('screen-name');
+  show('screen-main');
+  startApp(urlAppId, urlRoom, name);
+}
+
+$('n-join').addEventListener('click', proceedWithName);
+$('n-name').addEventListener('keydown', e => { if (e.key === 'Enter') proceedWithName(); });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ГЛАВНОЕ ПРИЛОЖЕНИЕ
+// ══════════════════════════════════════════════════════════════════════════════
+async function startApp(appId, room, myName) {
+  const channelName = 'racia-' + room;
+
+  // Показываем комнату
+  $('m-room').textContent = room.toUpperCase();
+  $('m-room').addEventListener('click', () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      $('m-copy-hint').classList.add('visible');
+      setTimeout(() => $('m-copy-hint').classList.remove('visible'), 2200);
+    });
+  });
+
+  // ── Состояние ─────────────────────────────────────────────────────────────
+  // RTM UID кодирует имя + RTC uid: "Аня__482917"
+  const ruid   = Math.floor(Math.random() * 900000) + 100000; // 6-значный
+  const rtmUid = myName + '__' + ruid;
+
+  // participants: Map ruid(number) → { name, speaking }
+  const participants = new Map();
+  participants.set(ruid, { name: myName, speaking: false, isMe: true });
+
+  let muted      = false;
+  let talking    = false;
+  let localTrack = null;
+
+  const talkBtn = $('talk-btn');
+  const muteBtn = $('mute-btn');
+
+  // ── UI: рендер списка ──────────────────────────────────────────────────────
+  function renderList() {
+    const container = $('m-participants');
+    container.innerHTML = '';
+    const total = participants.size;
+
+    participants.forEach(({ name, speaking, isMe }, uid) => {
+      const item = document.createElement('div');
+      item.className = 'p-item' + (speaking ? ' speaking' : '');
+
+      const dot  = document.createElement('div');
+      dot.className = 'p-dot ' + (isMe ? 'me' : speaking ? 'speaking' : 'online');
+
+      const nm = document.createElement('div');
+      nm.className = 'p-name';
+      nm.textContent = name;
+
+      const tag = document.createElement('div');
+      if (isMe)      { tag.className = 'p-me-tag';      tag.textContent = 'ты'; }
+      else if (speaking) { tag.className = 'p-speaking-tag'; tag.textContent = '● говорит'; }
+
+      item.appendChild(dot);
+      item.appendChild(nm);
+      item.appendChild(tag);
+      container.appendChild(item);
+    });
+
+    if (!talking) $('m-status').textContent = 'Онлайн: ' + total + ' чел.';
   }
-  if (!talking) setStatus('Онлайн: ' + total + ' чел.');
-}
 
-// ── PeerJS slot ID ───────────────────────────────────────────────────────────
-const PREFIX = 'wt-v1-' + roomId + '-';
-const mkId   = n => PREFIX + n;
-const slotOf = id => {
-  if (!id.startsWith(PREFIX)) return null;
-  const n = parseInt(id.slice(PREFIX.length), 10);
-  return isNaN(n) ? null : n;
-};
+  // ── RTM: парсинг UID ──────────────────────────────────────────────────────
+  function parseRtmUid(uid) {
+    const sep = uid.lastIndexOf('__');
+    if (sep === -1) return null;
+    const name = uid.slice(0, sep);
+    const r    = parseInt(uid.slice(sep + 2), 10);
+    return isNaN(r) ? null : { name, ruid: r };
+  }
 
-// ── Connect ──────────────────────────────────────────────────────────────────
-function trySlot(n) {
-  if (n >= MAX) { setStatus('Комната заполнена (макс. 5)'); return; }
+  // ── Agora RTC ─────────────────────────────────────────────────────────────
+  AgoraRTC.setLogLevel(4);
+  const rtcClient = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
 
-  const p = new Peer(mkId(n), { debug: 0 });
+  rtcClient.on('user-published', async (user, mediaType) => {
+    await rtcClient.subscribe(user, mediaType);
+    if (mediaType !== 'audio') return;
+    user.audioTrack.play();
+    if (muted) user.audioTrack.setVolume(0);
 
-  p.on('open', () => {
-    mySlot = n; peer = p;
-    document.getElementById('dot-' + n).classList.add('me');
-    talkBtn.disabled = false;
-    setStatus('Онлайн: 1 чел.');
-    pollOthers();
-    setInterval(pollOthers, 5000);
+    // Пометить как говорящего
+    const uid = user.uid;
+    if (participants.has(uid)) {
+      participants.get(uid).speaking = true;
+      renderList();
+      $('m-status').textContent = (participants.get(uid)?.name || 'Кто-то') + ' говорит…';
+    }
   });
 
-  p.on('error', err => {
-    if (err.type === 'unavailable-id') { p.destroy(); trySlot(n + 1); }
-    else if (err.type !== 'peer-unavailable') console.warn(err.type, err.message);
+  rtcClient.on('user-unpublished', (user, mediaType) => {
+    if (mediaType !== 'audio') return;
+    const uid = user.uid;
+    if (participants.has(uid)) {
+      participants.get(uid).speaking = false;
+      renderList();
+    }
+    if (!talking) $('m-status').textContent = 'Онлайн: ' + participants.size + ' чел.';
   });
 
-  p.on('connection', conn => wireData(conn));
-
-  p.on('call', call => {
-    call.answer();
-    call.on('stream', s => playRemote(call.peer, s));
-    call.on('close',  () => stopRemote(call.peer));
-    call.on('error',  () => {});
+  rtcClient.on('user-left', user => {
+    participants.delete(user.uid);
+    renderList();
   });
-}
 
-function wireData(conn) {
-  conn.on('open', () => {
-    const s = slotOf(conn.peer);
-    if (s === null) return;
-    dataConns[s] = conn;
-    refreshDots();
-    conn.on('data', d => {
-      if (d && d.t === 'tx') {
-        const dot = document.getElementById('dot-' + s);
-        if (dot) {
-          dot.className = 'dot ' + (d.v ? 'speaking' : 'online');
-        }
-        if (!talking) setStatus(d.v ? 'Кто-то говорит…' : 'Онлайн: ' + (Object.keys(dataConns).length + 1) + ' чел.', false);
+  // ── Agora RTM ─────────────────────────────────────────────────────────────
+  const rtmClient  = AgoraRTM.createInstance(appId);
+  const rtmChannel = rtmClient.createChannel(channelName);
+
+  rtmChannel.on('MemberJoined', uid => {
+    const p = parseRtmUid(uid);
+    if (p) { participants.set(p.ruid, { name: p.name, speaking: false, isMe: false }); renderList(); }
+  });
+
+  rtmChannel.on('MemberLeft', uid => {
+    const p = parseRtmUid(uid);
+    if (p) { participants.delete(p.ruid); renderList(); }
+  });
+
+  // ── Подключение ───────────────────────────────────────────────────────────
+  $('m-status').textContent = 'Подключение…';
+  try {
+    // Параллельное подключение RTC + RTM
+    await Promise.all([
+      rtcClient.join(appId, channelName, null, ruid),
+      rtmClient.login({ uid: rtmUid }).then(() => rtmChannel.join())
+    ]);
+
+    // Загрузить уже подключённых участников через RTM
+    const members = await rtmChannel.getMembers();
+    members.forEach(uid => {
+      const p = parseRtmUid(uid);
+      if (p && p.ruid !== ruid) {
+        participants.set(p.ruid, { name: p.name, speaking: false, isMe: false });
       }
     });
-    conn.on('close', () => { delete dataConns[s]; refreshDots(); });
-    conn.on('error', () => {});
-  });
-}
 
-function pollOthers() {
-  if (!peer || peer.destroyed) return;
-  for (let i = 0; i < MAX; i++) {
-    if (i !== mySlot && !dataConns[i]) {
-      try { wireData(peer.connect(mkId(i))); } catch(_) {}
-    }
-  }
-}
+    renderList();
+    talkBtn.disabled = false;
+    $('m-status').textContent = 'Онлайн: ' + participants.size + ' чел.';
 
-// ── Audio ────────────────────────────────────────────────────────────────────
-function playRemote(pid, s) {
-  let a = remoteAudio[pid];
-  if (!a) {
-    a = new Audio();
-    a.autoplay = true;
-    document.getElementById('audio-container').appendChild(a);
-    remoteAudio[pid] = a;
-  }
-  a.srcObject = s;
-  a.muted = muted;
-}
-
-function stopRemote(pid) {
-  const a = remoteAudio[pid];
-  if (a) { a.srcObject = null; }
-}
-
-// ── Talk ─────────────────────────────────────────────────────────────────────
-async function startTalk() {
-  if (talking || talkBtn.disabled) return;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false
-    });
-    talking = true;
-    talkBtn.classList.add('pressing');
-    hintEl.textContent = 'Отпусти, чтобы замолчать';
-    setStatus('Ты говоришь…', true);
-    bcast({ t: 'tx', v: true });
-    calls = [];
-    for (let i = 0; i < MAX; i++) {
-      if (i === mySlot) continue;
-      try {
-        const c = peer.call(mkId(i), stream);
-        if (c) { c.on('error', () => {}); calls.push(c); }
-      } catch(_) {}
-    }
   } catch(e) {
-    toast('Нет доступа к микрофону');
-    console.error(e);
+    $('m-status').textContent = 'Ошибка подключения';
+    $('m-hint').textContent = 'Проверь App ID и интернет';
+    console.error('connection error:', e);
   }
-}
 
-function stopTalk() {
-  if (!talking) return;
-  talking = false;
-  talkBtn.classList.remove('pressing');
-  hintEl.textContent = 'Удерживай кнопку чтобы говорить';
-  bcast({ t: 'tx', v: false });
-  calls.forEach(c => { try { c.close(); } catch(_) {} });
-  calls = [];
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  refreshDots();
-}
+  // ── TALK ──────────────────────────────────────────────────────────────────
+  async function startTalk() {
+    if (talking || talkBtn.disabled) return;
+    try {
+      if (!localTrack) {
+        localTrack = await AgoraRTC.createMicrophoneAudioTrack({
+          AEC: true, ANS: true, AGC: true,
+          encoderConfig: { sampleRate: 16000, bitrate: 24 }
+        });
+      }
+      await rtcClient.publish([localTrack]);
+      talking = true;
+      talkBtn.classList.add('pressing');
+      $('m-hint').textContent = 'Отпусти, чтобы замолчать';
+      $('m-status').classList.add('tx');
+      $('m-status').textContent = 'Ты говоришь…';
+      // Себя тоже помечаем
+      if (participants.has(ruid)) participants.get(ruid).speaking = true;
+      renderList();
+    } catch(e) {
+      toast('Нет доступа к микрофону');
+      console.error(e);
+    }
+  }
 
-function bcast(data) {
-  Object.values(dataConns).forEach(c => {
-    try { if (c.open) c.send(data); } catch(_) {}
+  async function stopTalk() {
+    if (!talking) return;
+    await rtcClient.unpublish();
+    talking = false;
+    talkBtn.classList.remove('pressing');
+    $('m-hint').textContent = 'Удерживай кнопку чтобы говорить';
+    $('m-status').classList.remove('tx');
+    if (participants.has(ruid)) participants.get(ruid).speaking = false;
+    renderList();
+    $('m-status').textContent = 'Онлайн: ' + participants.size + ' чел.';
+  }
+
+  // ── События кнопок ────────────────────────────────────────────────────────
+  talkBtn.addEventListener('mousedown',   e => { e.preventDefault(); startTalk(); });
+  talkBtn.addEventListener('touchstart',  e => { e.preventDefault(); startTalk(); }, { passive: false });
+  talkBtn.addEventListener('mouseup',     stopTalk);
+  talkBtn.addEventListener('touchend',    e => { e.preventDefault(); stopTalk(); }, { passive: false });
+  talkBtn.addEventListener('mouseleave',  stopTalk);
+  talkBtn.addEventListener('touchcancel', stopTalk);
+
+  muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    muteBtn.classList.toggle('muted', muted);
+    // Регулируем громкость у всех удалённых пользователей
+    rtcClient.remoteUsers.forEach(u => {
+      if (u.audioTrack) u.audioTrack.setVolume(muted ? 0 : 100);
+    });
+    toast(muted ? 'Звук выключен' : 'Звук включён');
   });
 }
-
-// ── Events ───────────────────────────────────────────────────────────────────
-talkBtn.addEventListener('mousedown',  e => { e.preventDefault(); startTalk(); });
-talkBtn.addEventListener('touchstart', e => { e.preventDefault(); startTalk(); }, { passive: false });
-talkBtn.addEventListener('mouseup',    stopTalk);
-talkBtn.addEventListener('touchend',   e => { e.preventDefault(); stopTalk(); }, { passive: false });
-talkBtn.addEventListener('mouseleave', stopTalk);
-talkBtn.addEventListener('touchcancel',stopTalk);
-
-muteBtn.addEventListener('click', () => {
-  muted = !muted;
-  muteBtn.textContent = muted ? '🔇' : '🔊';
-  muteBtn.classList.toggle('muted', muted);
-  Object.values(remoteAudio).forEach(a => { a.muted = muted; });
-  toast(muted ? 'Звук выключен' : 'Звук включён');
-});
-
-// ── Start ─────────────────────────────────────────────────────────────────────
-trySlot(0);
 </script>
 </body>
 </html>
