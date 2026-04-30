@@ -124,8 +124,14 @@ const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
 const ICE_CFG = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: ['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turns:openrelay.metered.ca:443'],
-    username:'openrelayproject', credential:'openrelayproject' }
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: [
+    'turn:openrelay.metered.ca:80',
+    'turn:openrelay.metered.ca:80?transport=tcp',
+    'turn:openrelay.metered.ca:443',
+    'turn:openrelay.metered.ca:443?transport=tcp',
+    'turns:openrelay.metered.ca:443'
+  ], username:'openrelayproject', credential:'openrelayproject' }
 ]};
 
 // ── Смешные имена ─────────────────────────────────────────────────────────────
@@ -267,17 +273,15 @@ async function startApp(initialName) {
   // Вызывать только из обработчика нажатия (user gesture) — иначе iOS блокирует
   async function acquireStream() {
     if (localStream) return localStream;
-    localStream = await navigator.mediaDevices.getUserMedia({
-      audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true},
-      video: false
-    });
+    // audio:true — максимальная совместимость с iOS Safari
+    localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
     localStream.getAudioTracks().forEach(t => t.enabled = false);
     return localStream;
   }
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
-  // Разблокировать autoplay при любом касании (Chrome требует жест)
+  // Разблокировать autoplay при любом касании — Chrome и Safari блокируют без жеста
   function tryPlayAll() {
     document.querySelectorAll('audio').forEach(a => { if(a.paused) a.play().catch(()=>{}); });
   }
@@ -296,12 +300,23 @@ async function startApp(initialName) {
       a.muted = muted;
       a.play().catch(()=>{});
     };
+
     pc.onicecandidate = ({candidate}) => {
       if(!candidate) return;
       const idx = peers[remoteUid].iceTx++;
       fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
     };
-    pc.onconnectionstatechange = () => { if(pc.connectionState==='failed'){try{pc.restartIce();}catch(_){}} };
+
+    // ICE-рестарт: создаём новый offer чтобы реально переподключиться
+    pc.onconnectionstatechange = async () => {
+      if (pc.connectionState === 'failed' && pc.signalingState === 'stable') {
+        try {
+          const offer = await pc.createOffer({iceRestart:true});
+          await pc.setLocalDescription(offer);
+          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+        } catch(e) {}
+      }
+    };
 
     fbListen(room,'ice/'+remoteUid+'/'+myUid,(path,data)=>{
       if(path==='/'){ if(data) Object.values(data).forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{})); return; }
@@ -310,21 +325,10 @@ async function startApp(initialName) {
     return pc;
   }
 
-  // Поставить микрофон в sender. Ищем audio sender (null или audio kind).
-  function putMicInSender(pc) {
-    if (!localStream) return;
-    const mic = localStream.getAudioTracks()[0];
-    if (!mic) return;
-    const sender = pc.getSenders().find(s => !s.track || s.track.kind === 'audio');
-    if (sender) sender.replaceTrack(mic).catch(()=>{});
-  }
-
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
-    // addTransceiver с потоком → SDP имеет MSID → ontrack у собеседника
-    // получает streams[0] корректно, без пересогласовки при нажатии TALK
-    pc.addTransceiver('audio', {direction:'sendrecv', streams:[new MediaStream()]});
-    if (localStream) putMicInSender(pc);
+    // Если микрофон уже есть — добавляем сразу, иначе добавим при нажатии TALK
+    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
@@ -335,25 +339,29 @@ async function startApp(initialName) {
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
+      // Добавляем трек ДО setRemoteDescription — тогда addTrack попадёт в answer
+      // и собеседник увидит наш sendrecv, а не recvonly
+      if (localStream && !pc.getSenders().some(s => s.track)) {
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      // Принудительно sendrecv — иначе Chrome создаёт answer с recvonly
-      // (нет трека → recvonly), и ontrack у offerer не сработает
+      // Принудительно sendrecv — Chrome без трека пишет recvonly в answer,
+      // тогда ontrack у другой стороны не сработает
       for (const t of pc.getTransceivers()) {
         if (t.receiver.track?.kind === 'audio' && t.direction !== 'sendrecv') {
           t.direction = 'sendrecv';
         }
       }
-      if (localStream) putMicInSender(pc);
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
-    } catch(_) {}
+    } catch(e) {}
   }
 
   async function handleAnswer(remoteUid, data) {
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
-    try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(_) {}
+    try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
   }
 
   // ── Presence ─────────────────────────────────────────────────────────────
@@ -434,16 +442,26 @@ async function startApp(initialName) {
   async function startTalk() {
     if(talking||tbtn.disabled)return;
     try {
-      // Получаем микрофон здесь — это user gesture, iOS разрешает
+      // acquireStream — только здесь, это user gesture (iOS + Chrome требуют)
       const s = await acquireStream();
       s.getAudioTracks().forEach(t => t.enabled = true);
 
-      // replaceTrack — audio-канал уже в SDP, пересогласовка не нужна
-      for(const {pc} of Object.values(peers)) putMicInSender(pc);
+      // Для каждого собеседника: добавляем трек если ещё нет,
+      // потом явно отправляем новый offer (не полагаемся на onnegotiationneeded)
+      for (const [remoteUid, {pc}] of Object.entries(peers)) {
+        if (!pc.getSenders().some(snd => snd.track)) {
+          s.getTracks().forEach(t => pc.addTrack(t, s));
+        }
+        if (pc.signalingState === 'stable') {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+          } catch(e) {}
+        }
+      }
 
-      // Разблокировать воспроизведение на этом устройстве (user gesture)
-      tryPlayAll();
-
+      tryPlayAll(); // разблокируем воспроизведение (user gesture)
       talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent='Отпусти, чтобы замолчать';
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
