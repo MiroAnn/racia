@@ -313,7 +313,7 @@ async function startApp(initialName) {
         try {
           const offer = await pc.createOffer({iceRestart:true});
           await pc.setLocalDescription(offer);
-          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
+          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
         } catch(e) {}
       }
     };
@@ -325,7 +325,7 @@ async function startApp(initialName) {
     return pc;
   }
 
-  const SESSION_START = Date.now(); // метка: сигналы старше этого момента — мусор
+  const SESSION_START = Date.now(); // ID текущей сессии
 
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
@@ -334,12 +334,10 @@ async function startApp(initialName) {
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:SESSION_START});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
   }
 
   async function handleOffer(remoteUid, data) {
-    // Игнорируем сигналы, которые старше нашей сессии (мусор от предыдущих)
-    if (data.ts && data.ts < SESSION_START - 5000) return;
     const pc = await makePC(remoteUid);
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
@@ -354,16 +352,20 @@ async function startApp(initialName) {
       }
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp,ts:SESSION_START});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
     } catch(e) {}
   }
 
   async function handleAnswer(remoteUid, data) {
-    // Игнорируем протухшие ответы
-    if (data.ts && data.ts < SESSION_START - 5000) return;
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
+  }
+
+  // Закрыть и удалить PC для пира (чтобы пересоздать)
+  function dropPeer(remoteUid) {
+    if (peers[remoteUid]) { try{peers[remoteUid].pc.close();}catch(_){} delete peers[remoteUid]; }
+    const a = document.getElementById('a-'+remoteUid); if(a) a.remove();
   }
 
   // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
@@ -376,14 +378,16 @@ async function startApp(initialName) {
 
   // ── Presence ─────────────────────────────────────────────────────────────
   presence[myUid] = {name:currentMyName, speaking:false};
-  fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now()});
+  // sid = session ID: меняется при каждой перезагрузке страницы.
+  // Другие участники детектируют смену sid → пересоздают соединение.
+  fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
 
   window.addEventListener('beforeunload',()=>{
     fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
     fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
   });
 
-  // Heartbeat — обновлять ts каждые 20 сек
+  // Heartbeat — обновлять ts каждые 20 сек (sid не меняется — это маркер сессии)
   setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 20000);
 
   // Чистка призраков — только записи без имени или без heartbeat > 5 минут
@@ -395,7 +399,7 @@ async function startApp(initialName) {
     const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      const isGhost = !data || !data.name || (data.ts && now - data.ts > 300000);
+      const isGhost = !data || !data.name || (data.ts && now - data.ts > 120000);
       if (isGhost) {
         fbDel(room,'users/'+uid);
         fbDel(room,'talking/'+uid);
@@ -408,21 +412,34 @@ async function startApp(initialName) {
   setInterval(cleanGhosts, 60000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
+  // sid каждого пира, которого мы видим (чтобы детектировать перезагрузку)
+  const peerSids = {};
+
   fbListen(room,'users',(path,data)=>{
     const proc=(uid,d)=>{
       if(uid===myUid)return;
       if(!d || !d.name){
         // нет данных или нет имени — призрак, удаляем
         if(d && !d.name) { fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid); }
-        delete presence[uid];
-        if(peers[uid]){try{peers[uid].pc.close();}catch(_){} delete peers[uid];}
-        const a=document.getElementById('a-'+uid); if(a)a.remove();
-      } else if(!presence[uid]) {
-        presence[uid]={name:d.name,speaking:false};
-        if(myUid<uid) sendOffer(uid);
+        delete presence[uid]; delete peerSids[uid];
+        dropPeer(uid);
       } else {
-        // Обновить имя если изменилось
-        presence[uid].name = d.name;
+        const sidChanged = d.sid && peerSids[uid] && peerSids[uid] !== d.sid;
+        if (sidChanged) {
+          // Пир перезагрузился → закрываем старый PC и пересоздаём соединение
+          dropPeer(uid);
+          delete presence[uid];
+        }
+        if (d.sid) peerSids[uid] = d.sid;
+
+        if (!presence[uid]) {
+          // Новый пир (или после перезагрузки) → устанавливаем соединение
+          presence[uid]={name:d.name,speaking:false};
+          if(myUid<uid) sendOffer(uid);
+        } else {
+          // Обновить имя если изменилось
+          presence[uid].name = d.name;
+        }
       }
     };
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,d])=>proc(uid,d));}
