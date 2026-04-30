@@ -285,16 +285,6 @@ async function startApp(initialName) {
     // Если поток уже есть — добавляем треки сразу
     if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
-    // Пересогласование: срабатывает когда addTrack вызывается после установки соединения
-    pc.onnegotiationneeded = async () => {
-      if (pc.signalingState !== 'stable') return;
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        fbPut(room, 'signals/'+remoteUid+'/'+myUid, {type:'offer', sdp:offer.sdp});
-      } catch(_) {}
-    };
-
     pc.ontrack = ({streams}) => {
       let a=document.getElementById('a-'+remoteUid);
       if(!a){a=new Audio();a.id='a-'+remoteUid;a.autoplay=true;document.body.appendChild(a);}
@@ -320,10 +310,15 @@ async function startApp(initialName) {
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
   }
   async function handleOffer(remoteUid,data) {
-    const pc=await makePC(remoteUid); if(pc.signalingState!=='stable')return;
-    await pc.setRemoteDescription(new RTCSessionDescription(data));
-    const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
+    const pc=await makePC(remoteUid);
+    try {
+      // Если мы сами отправили offer — откатываемся (glare condition)
+      if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
+      if(pc.signalingState!=='stable') return;
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
+    } catch(_) {}
   }
   async function handleAnswer(remoteUid,data) {
     const p=peers[remoteUid]; if(!p||p.pc.signalingState==='stable')return;
@@ -411,18 +406,29 @@ async function startApp(initialName) {
       // Получаем микрофон здесь — это user gesture, iOS разрешает
       const s = await acquireStream();
 
-      // Первый раз: добавляем трек во все уже открытые соединения
-      // onnegotiationneeded запустит пересогласование автоматически
-      Object.values(peers).forEach(({pc}) => {
-        if (!pc.getSenders().some(sender => sender.track)) {
-          s.getTracks().forEach(t => pc.addTrack(t, s));
+      // Добавляем трек во все соединения без аудио-трека
+      for(const [remoteUid,{pc}] of Object.entries(peers)){
+        if(!pc.getSenders().some(sender=>sender.track)){
+          s.getTracks().forEach(t=>pc.addTrack(t,s));
         }
-      });
+      }
 
       s.getAudioTracks().forEach(t => t.enabled = true);
       talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent='Отпусти, чтобы замолчать';
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
+
+      // Явно пересогласовываем с каждым — НЕ полагаемся на onnegotiationneeded,
+      // т.к. iOS Safari его не всегда вызывает после addTrack
+      for(const [remoteUid,{pc}] of Object.entries(peers)){
+        if(pc.signalingState==='stable'){
+          try{
+            const offer=await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+          }catch(_){}
+        }
+      }
     } catch(e){ toast('Нет доступа к микрофону'); }
   }
   function stopTalk() {
