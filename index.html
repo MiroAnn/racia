@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🏔️ Рация</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d0d1a;
+      --card:    #161628;
+      --green:   #00d46a;
+      --red:     #ff3b30;
+      --blue:    #4a9eff;
+      --text:    #ffffff;
+      --muted:   #6b7280;
+      --border:  #1f1f38;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 36px 24px 40px;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── Header ── */
+    .header {
+      width: 100%;
+      text-align: center;
+    }
+
+    .logo {
+      font-size: 2rem;
+      margin-bottom: 4px;
+    }
+
+    .title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+
+    .room-row {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .room-label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .room-badge {
+      background: rgba(74, 158, 255, 0.12);
+      border: 1px solid rgba(74, 158, 255, 0.3);
+      color: var(--blue);
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      padding: 3px 12px;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .room-badge:active { background: rgba(74, 158, 255, 0.22); }
+
+    .copy-hint {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 5px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .copy-hint.visible { opacity: 1; }
+
+    /* ── Presence ── */
+    .presence {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .dots-row {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #2a2a40;
+      border: 2px solid #2a2a40;
+      transition: background 0.3s, transform 0.2s, box-shadow 0.3s, border-color 0.3s;
+    }
+
+    .dot.me {
+      background: var(--green);
+      border-color: var(--green);
+      box-shadow: 0 0 10px rgba(0, 212, 106, 0.5);
+    }
+
+    .dot.online {
+      background: var(--blue);
+      border-color: var(--blue);
+      box-shadow: 0 0 8px rgba(74, 158, 255, 0.4);
+    }
+
+    .dot.speaking {
+      background: var(--red);
+      border-color: var(--red);
+      transform: scale(1.6);
+      box-shadow: 0 0 16px rgba(255, 59, 48, 0.7);
+    }
+
+    .status-line {
+      font-size: 0.9rem;
+      color: var(--muted);
+      text-align: center;
+      min-height: 1.3em;
+      transition: color 0.2s;
+    }
+
+    .status-line.active {
+      color: var(--red);
+      font-weight: 600;
+      animation: blink 0.9s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
+    }
+
+    /* ── Talk button ── */
+    .talk-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+    }
+
+    #talk-btn {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+
+      background: radial-gradient(circle at 38% 35%, #00e87a, #00a84f);
+      box-shadow:
+        0 0 0 8px rgba(0, 212, 106, 0.08),
+        0 0 0 16px rgba(0, 212, 106, 0.04),
+        0 12px 40px rgba(0, 212, 106, 0.35),
+        inset 0 2px 0 rgba(255,255,255,0.18),
+        inset 0 -4px 8px rgba(0,0,0,0.25);
+
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+
+      transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.1s;
+    }
+
+    #talk-btn:disabled {
+      background: radial-gradient(circle at 38% 35%, #2e2e48, #1e1e32);
+      box-shadow:
+        0 6px 20px rgba(0,0,0,0.4),
+        inset 0 2px 0 rgba(255,255,255,0.04);
+      cursor: not-allowed;
+    }
+
+    #talk-btn.pressing {
+      background: radial-gradient(circle at 38% 35%, #ff5f55, #cc2e24);
+      box-shadow:
+        0 0 0 8px rgba(255, 59, 48, 0.1),
+        0 0 0 16px rgba(255, 59, 48, 0.05),
+        0 8px 30px rgba(255, 59, 48, 0.5),
+        inset 0 2px 0 rgba(255,255,255,0.12),
+        inset 0 -4px 8px rgba(0,0,0,0.3);
+      transform: scale(0.95);
+    }
+
+    .btn-icon {
+      font-size: 2.4rem;
+      line-height: 1;
+      pointer-events: none;
+    }
+
+    .btn-label {
+      font-size: 1.05rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.95);
+      pointer-events: none;
+    }
+
+    .talk-hint {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* ── Bottom controls ── */
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #mute-btn {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 1.5rem;
+      cursor: pointer;
+      outline: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.2s, border-color 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #mute-btn.muted {
+      border-color: var(--red);
+      background: rgba(255, 59, 48, 0.1);
+    }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: rgba(255,255,255,0.12);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      transition: transform 0.3s ease;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    #audio-container { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">🏔️</div>
+    <div class="title">Рация</div>
+    <div class="room-row">
+      <span class="room-label">Комната</span>
+      <span class="room-badge" id="room-code" title="Нажми — скопировать ссылку">—</span>
+    </div>
+    <div class="copy-hint" id="copy-hint">✓ Ссылка скопирована</div>
+  </div>
+
+  <!-- Presence -->
+  <div class="presence">
+    <div class="dots-row">
+      <div class="dot" id="dot-0"></div>
+      <div class="dot" id="dot-1"></div>
+      <div class="dot" id="dot-2"></div>
+      <div class="dot" id="dot-3"></div>
+      <div class="dot" id="dot-4"></div>
+    </div>
+    <div class="status-line" id="status-line">Подключение…</div>
+  </div>
+
+  <!-- Talk button -->
+  <div class="talk-wrap">
+    <button id="talk-btn" disabled>
+      <div class="btn-icon">🎙️</div>
+      <div class="btn-label">TALK</div>
+    </button>
+    <div class="talk-hint" id="talk-hint">Удерживай кнопку чтобы говорить</div>
+  </div>
+
+  <!-- Bottom -->
+  <div class="controls">
+    <button id="mute-btn" title="Звук">🔊</button>
+  </div>
+
+  <div id="audio-container"></div>
+  <div id="toast"></div>
+
+<script>
+// ── Room ID ──────────────────────────────────────────────────────────────────
+const params = new URLSearchParams(window.location.search);
+let roomId = params.get('room');
+if (!roomId) {
+  roomId = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const u = new URL(window.location.href);
+  u.searchParams.set('room', roomId);
+  window.history.replaceState({}, '', u.toString());
+}
+document.getElementById('room-code').textContent = roomId;
+
+// Copy room link on tap
+document.getElementById('room-code').addEventListener('click', () => {
+  const url = new URL(window.location.href);
+  url.searchParams.set('room', roomId);
+  navigator.clipboard.writeText(url.toString()).then(() => {
+    const hint = document.getElementById('copy-hint');
+    hint.classList.add('visible');
+    setTimeout(() => hint.classList.remove('visible'), 2000);
+  });
+});
+
+// ── State ────────────────────────────────────────────────────────────────────
+const MAX   = 5;
+let mySlot  = null;
+let peer    = null;
+let muted   = false;
+let talking = false;
+let stream  = null;
+let calls   = [];
+const dataConns   = {};   // slot → DataConnection
+const remoteAudio = {};   // peerId → <audio>
+
+// ── DOM ──────────────────────────────────────────────────────────────────────
+const talkBtn  = document.getElementById('talk-btn');
+const muteBtn  = document.getElementById('mute-btn');
+const statusEl = document.getElementById('status-line');
+const hintEl   = document.getElementById('talk-hint');
+
+function setStatus(text, isTransmit = false) {
+  statusEl.textContent = text;
+  statusEl.classList.toggle('active', isTransmit);
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+function refreshDots() {
+  const total = Object.keys(dataConns).length + 1;
+  for (let i = 0; i < MAX; i++) {
+    const dot = document.getElementById('dot-' + i);
+    dot.className = 'dot';
+    if (i === mySlot)      dot.classList.add('me');
+    else if (dataConns[i]) dot.classList.add('online');
+  }
+  if (!talking) setStatus('Онлайн: ' + total + ' чел.');
+}
+
+// ── PeerJS slot ID ───────────────────────────────────────────────────────────
+const PREFIX = 'wt-v1-' + roomId + '-';
+const mkId   = n => PREFIX + n;
+const slotOf = id => {
+  if (!id.startsWith(PREFIX)) return null;
+  const n = parseInt(id.slice(PREFIX.length), 10);
+  return isNaN(n) ? null : n;
+};
+
+// ── Connect ──────────────────────────────────────────────────────────────────
+function trySlot(n) {
+  if (n >= MAX) { setStatus('Комната заполнена (макс. 5)'); return; }
+
+  const p = new Peer(mkId(n), { debug: 0 });
+
+  p.on('open', () => {
+    mySlot = n; peer = p;
+    document.getElementById('dot-' + n).classList.add('me');
+    talkBtn.disabled = false;
+    setStatus('Онлайн: 1 чел.');
+    pollOthers();
+    setInterval(pollOthers, 5000);
+  });
+
+  p.on('error', err => {
+    if (err.type === 'unavailable-id') { p.destroy(); trySlot(n + 1); }
+    else if (err.type !== 'peer-unavailable') console.warn(err.type, err.message);
+  });
+
+  p.on('connection', conn => wireData(conn));
+
+  p.on('call', call => {
+    call.answer();
+    call.on('stream', s => playRemote(call.peer, s));
+    call.on('close',  () => stopRemote(call.peer));
+    call.on('error',  () => {});
+  });
+}
+
+function wireData(conn) {
+  conn.on('open', () => {
+    const s = slotOf(conn.peer);
+    if (s === null) return;
+    dataConns[s] = conn;
+    refreshDots();
+    conn.on('data', d => {
+      if (d && d.t === 'tx') {
+        const dot = document.getElementById('dot-' + s);
+        if (dot) {
+          dot.className = 'dot ' + (d.v ? 'speaking' : 'online');
+        }
+        if (!talking) setStatus(d.v ? 'Кто-то говорит…' : 'Онлайн: ' + (Object.keys(dataConns).length + 1) + ' чел.', false);
+      }
+    });
+    conn.on('close', () => { delete dataConns[s]; refreshDots(); });
+    conn.on('error', () => {});
+  });
+}
+
+function pollOthers() {
+  if (!peer || peer.destroyed) return;
+  for (let i = 0; i < MAX; i++) {
+    if (i !== mySlot && !dataConns[i]) {
+      try { wireData(peer.connect(mkId(i))); } catch(_) {}
+    }
+  }
+}
+
+// ── Audio ────────────────────────────────────────────────────────────────────
+function playRemote(pid, s) {
+  let a = remoteAudio[pid];
+  if (!a) {
+    a = new Audio();
+    a.autoplay = true;
+    document.getElementById('audio-container').appendChild(a);
+    remoteAudio[pid] = a;
+  }
+  a.srcObject = s;
+  a.muted = muted;
+}
+
+function stopRemote(pid) {
+  const a = remoteAudio[pid];
+  if (a) { a.srcObject = null; }
+}
+
+// ── Talk ─────────────────────────────────────────────────────────────────────
+async function startTalk() {
+  if (talking || talkBtn.disabled) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+    talking = true;
+    talkBtn.classList.add('pressing');
+    hintEl.textContent = 'Отпусти, чтобы замолчать';
+    setStatus('Ты говоришь…', true);
+    bcast({ t: 'tx', v: true });
+    calls = [];
+    for (let i = 0; i < MAX; i++) {
+      if (i === mySlot) continue;
+      try {
+        const c = peer.call(mkId(i), stream);
+        if (c) { c.on('error', () => {}); calls.push(c); }
+      } catch(_) {}
+    }
+  } catch(e) {
+    toast('Нет доступа к микрофону');
+    console.error(e);
+  }
+}
+
+function stopTalk() {
+  if (!talking) return;
+  talking = false;
+  talkBtn.classList.remove('pressing');
+  hintEl.textContent = 'Удерживай кнопку чтобы говорить';
+  bcast({ t: 'tx', v: false });
+  calls.forEach(c => { try { c.close(); } catch(_) {} });
+  calls = [];
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  refreshDots();
+}
+
+function bcast(data) {
+  Object.values(dataConns).forEach(c => {
+    try { if (c.open) c.send(data); } catch(_) {}
+  });
+}
+
+// ── Events ───────────────────────────────────────────────────────────────────
+talkBtn.addEventListener('mousedown',  e => { e.preventDefault(); startTalk(); });
+talkBtn.addEventListener('touchstart', e => { e.preventDefault(); startTalk(); }, { passive: false });
+talkBtn.addEventListener('mouseup',    stopTalk);
+talkBtn.addEventListener('touchend',   e => { e.preventDefault(); stopTalk(); }, { passive: false });
+talkBtn.addEventListener('mouseleave', stopTalk);
+talkBtn.addEventListener('touchcancel',stopTalk);
+
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  muteBtn.classList.toggle('muted', muted);
+  Object.values(remoteAudio).forEach(a => { a.muted = muted; });
+  toast(muted ? 'Звук выключен' : 'Звук включён');
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+trySlot(0);
+</script>
+</body>
+</html>
