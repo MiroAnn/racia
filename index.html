@@ -295,6 +295,8 @@ async function startApp(initialName) {
   // ── Восстановление после возврата на вкладку ──────────────────────────────
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
+    // Сразу обновляем своё присутствие — пока страница была в фоне, heartbeat мог тормозить
+    doHeartbeat();
 
     // 1. Проверяем микрофонный трек
     if (localStream) {
@@ -442,32 +444,48 @@ async function startApp(initialName) {
   window.addEventListener('beforeunload', onLeave);
   window.addEventListener('pagehide', onLeave);
 
-  // Heartbeat — полная запись каждые 20 сек.
-  // Важно: обновлять ВСЮ запись (не только /ts), чтобы если cleanGhosts случайно
-  // удалил нас — мы восстановились с именем и sid, а не висели призраком без имени.
-  setInterval(()=>fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START}), 20000);
+  // Heartbeat — полная запись каждые 8 сек.
+  // Полная запись (не только /ts) — если наша запись была удалена, восстановимся сами.
+  const doHeartbeat = () => fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
+  setInterval(doHeartbeat, 8000);
 
-  // Чистка призраков: нет имени → удаляем сразу; нет heartbeat > 90 сек → призрак.
-  // Heartbeat каждые 20 сек, 90 сек = 4 цикла + запас на медленный мобайл.
+  // ── Детектор ушедших участников (без Firebase-запросов) ──────────────────
+  // Каждый heartbeat пира обновляет Firebase → SSE приходит к нам → обновляем lastSeen.
+  // Если lastSeen не обновлялся 28 сек (3.5 цикла) — пир ушёл.
+  const lastSeen = {};
+
+  setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    Object.keys(lastSeen).forEach(uid => {
+      if (now - lastSeen[uid] > 28000) {
+        fbDel(room,'users/'+uid);
+        fbDel(room,'talking/'+uid);
+        delete presence[uid]; delete peerSids[uid]; delete lastSeen[uid];
+        dropPeer(uid);
+        changed = true;
+      }
+    });
+    if (changed) renderList();
+  }, 8000);
+
+  // Резервная чистка через Firebase-запрос (на случай пустых записей без имени)
   async function cleanGhosts() {
     let all;
     try { const res = await fetch(fbUrl(room,'users')); all = await res.json(); } catch(e){ return; }
     if (!all) return;
-    const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      const isGhost = !data || !data.name || (data.ts && now - data.ts > 90000);
-      if (isGhost) {
-        fbDel(room,'users/'+uid);
-        fbDel(room,'talking/'+uid);
-        delete presence[uid];
-        dropPeer(uid); // закрыть PC сразу, не ждать SSE
+      if (!data || !data.name) { // только записи вообще без имени
+        fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
+        delete presence[uid]; delete lastSeen[uid];
+        dropPeer(uid);
       }
     });
     renderList();
   }
   cleanGhosts();
-  setInterval(cleanGhosts, 40000);
+  setInterval(cleanGhosts, 60000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   // sid каждого пира, которого мы видим (чтобы детектировать перезагрузку)
@@ -489,6 +507,8 @@ async function startApp(initialName) {
           delete presence[uid];
         }
         if (d.sid) peerSids[uid] = d.sid;
+
+        lastSeen[uid] = Date.now(); // обновляем при каждом SSE-событии от пира
 
         if (!presence[uid]) {
           // Новый пир (или после перезагрузки) → устанавливаем соединение
