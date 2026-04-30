@@ -21,16 +21,15 @@
     }
 
     /* Шапка */
-    .hd { width: 100%; }
-    /* Строка: [лево: лого+название] [центр: кнопка мута] */
-    .hd-top { display: flex; align-items: center; position: relative; }
-    .hd-left { display: flex; align-items: center; gap: 6px; }
+    .hd { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+    .hd-left { display: flex; flex-direction: column; gap: 5px; }
+    .hd-logo-title { display: flex; align-items: center; gap: 6px; }
     .hd-logo { font-size: 1.2rem; line-height: 1; }
     .hd-title { font-size: .95rem; font-weight: 700; }
-    .hd-room { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+    .hd-room { display: flex; align-items: center; gap: 7px; }
     .hd-rlbl { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
     .hd-rbadge { background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24); color: var(--blue); font-size: .75rem; font-weight: 700; letter-spacing: .1em; padding: 2px 10px; border-radius: 20px; cursor: pointer; }
-    .hd-chint { font-size: .64rem; color: var(--muted); margin-top: 3px; opacity: 0; transition: opacity .3s; height: .75em; }
+    .hd-chint { font-size: .64rem; color: var(--muted); margin-top: 1px; opacity: 0; transition: opacity .3s; height: .75em; }
     .hd-chint.on { opacity: 1; }
 
     /* Участники */
@@ -80,8 +79,8 @@
 
     .thint { color: var(--muted); font-size: .73rem; text-align: center; }
 
-    /* Mute — по центру шапки */
-    #mbtn { position: absolute; left: 50%; transform: translateX(-50%); width: 48px; height: 48px; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
+    /* Mute — справа в шапке */
+    #mbtn { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
     #mbtn.muted { border-color: var(--red); background: rgba(255,59,48,.12); }
 
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
@@ -92,18 +91,18 @@
 
 <div id="app">
   <div class="hd">
-    <div class="hd-top">
-      <div class="hd-left">
+    <div class="hd-left">
+      <div class="hd-logo-title">
         <div class="hd-logo">🏔️</div>
         <div class="hd-title">Рация</div>
       </div>
-      <button id="mbtn">🔊</button>
+      <div class="hd-room">
+        <span class="hd-rlbl">Комната</span>
+        <span class="hd-rbadge" id="m-room">—</span>
+      </div>
+      <div class="hd-chint" id="m-chint">✓ Ссылка скопирована</div>
     </div>
-    <div class="hd-room">
-      <span class="hd-rlbl">Комната</span>
-      <span class="hd-rbadge" id="m-room">—</span>
-    </div>
-    <div class="hd-chint" id="m-chint">✓ Ссылка скопирована</div>
+    <button id="mbtn">🔊</button>
   </div>
 
   <div style="width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:6px;">
@@ -282,9 +281,6 @@ async function startApp(initialName) {
     const pc = new RTCPeerConnection(ICE_CFG);
     peers[remoteUid] = {pc, iceTx:0};
 
-    // Если поток уже есть — добавляем треки сразу
-    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
     pc.ontrack = ({streams}) => {
       let a=document.getElementById('a-'+remoteUid);
       if(!a){a=new Audio();a.id='a-'+remoteUid;a.autoplay=true;document.body.appendChild(a);}
@@ -304,19 +300,34 @@ async function startApp(initialName) {
     return pc;
   }
 
+  // Хелпер: поставить трек микрофона в уже готовый sender (без пересогласовки)
+  function putMicInSender(pc) {
+    if (!localStream) return;
+    const micTrack = localStream.getAudioTracks()[0];
+    if (!micTrack) return;
+    const sender = pc.getSenders().find(s => !s.track || s.track.kind==='audio');
+    if (sender) sender.replaceTrack(micTrack).catch(()=>{});
+  }
+
   async function sendOffer(remoteUid) {
-    const pc=await makePC(remoteUid);
-    const offer=await pc.createOffer(); await pc.setLocalDescription(offer);
+    const pc = await makePC(remoteUid);
+    // addTransceiver гарантирует audio m-line в SDP с самого начала —
+    // не нужна пересогласовка когда пользователь нажмёт TALK
+    pc.addTransceiver('audio', {direction:'sendrecv'});
+    if (localStream) putMicInSender(pc); // уже говорим — сразу ставим трек
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
   }
   async function handleOffer(remoteUid,data) {
-    const pc=await makePC(remoteUid);
+    const pc = await makePC(remoteUid);
     try {
-      // Если мы сами отправили offer — откатываемся (glare condition)
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      const ans=await pc.createAnswer(); await pc.setLocalDescription(ans);
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      if (localStream) putMicInSender(pc); // уже говорим — сразу ставим трек
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
     } catch(_) {}
   }
@@ -405,30 +416,17 @@ async function startApp(initialName) {
     try {
       // Получаем микрофон здесь — это user gesture, iOS разрешает
       const s = await acquireStream();
+      s.getAudioTracks().forEach(t => t.enabled = true);
 
-      // Добавляем трек во все соединения без аудио-трека
-      for(const [remoteUid,{pc}] of Object.entries(peers)){
-        if(!pc.getSenders().some(sender=>sender.track)){
-          s.getTracks().forEach(t=>pc.addTrack(t,s));
-        }
+      // replaceTrack — никакой пересогласовки не нужно,
+      // audio-канал уже есть в SDP благодаря addTransceiver при подключении
+      for(const {pc} of Object.values(peers)){
+        putMicInSender(pc);
       }
 
-      s.getAudioTracks().forEach(t => t.enabled = true);
       talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent='Отпусти, чтобы замолчать';
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
-
-      // Явно пересогласовываем с каждым — НЕ полагаемся на onnegotiationneeded,
-      // т.к. iOS Safari его не всегда вызывает после addTrack
-      for(const [remoteUid,{pc}] of Object.entries(peers)){
-        if(pc.signalingState==='stable'){
-          try{
-            const offer=await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
-          }catch(_){}
-        }
-      }
     } catch(e){ toast('Нет доступа к микрофону'); }
   }
   function stopTalk() {
