@@ -328,7 +328,8 @@ async function startApp(initialName) {
   // Heartbeat — обновлять ts каждые 20 сек
   setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 20000);
 
-  // Чистка призраков — удаляем записи без имени или без heartbeat > 60 сек
+  // Чистка призраков — только записи без имени или без heartbeat > 5 минут
+  // (5 мин, а не 60 сек — мобильный браузер тормозит фоновые вкладки)
   async function cleanGhosts() {
     const res = await fetch(fbUrl(room,'users'));
     const all = await res.json();
@@ -336,7 +337,7 @@ async function startApp(initialName) {
     const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      const isGhost = !data || !data.name || !data.ts || (now - data.ts > 60000);
+      const isGhost = !data || !data.name || (data.ts && now - data.ts > 300000);
       if (isGhost) {
         fbDel(room,'users/'+uid);
         fbDel(room,'talking/'+uid);
@@ -346,7 +347,7 @@ async function startApp(initialName) {
     renderList();
   }
   cleanGhosts();
-  setInterval(cleanGhosts, 30000);
+  setInterval(cleanGhosts, 60000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   fbListen(room,'users',(path,data)=>{
