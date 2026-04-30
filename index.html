@@ -281,10 +281,12 @@ async function startApp(initialName) {
     const pc = new RTCPeerConnection(ICE_CFG);
     peers[remoteUid] = {pc, iceTx:0};
 
-    pc.ontrack = ({streams}) => {
+    pc.ontrack = ({track, streams}) => {
       let a=document.getElementById('a-'+remoteUid);
       if(!a){a=new Audio();a.id='a-'+remoteUid;a.autoplay=true;document.body.appendChild(a);}
-      a.srcObject=streams[0]; a.muted=muted;
+      // addTransceiver не передаёт streams[0] — создаём MediaStream вручную
+      a.srcObject = (streams && streams.length) ? streams[0] : new MediaStream([track]);
+      a.muted=muted;
     };
     pc.onicecandidate = ({candidate}) => {
       if(!candidate)return;
