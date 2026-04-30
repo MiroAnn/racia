@@ -11,21 +11,31 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 
     /* ── Главный экран ── */
-    #app { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 28px 18px 32px; }
+    /* 100dvh учитывает адресную строку Safari на iOS */
+    #app {
+      height: 100vh; height: 100dvh; /* dvh учитывает адресную строку Safari */
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px 20px;
+      padding-bottom: max(20px, env(safe-area-inset-bottom));
+    }
 
     /* Шапка */
-    .hd { width: 100%; text-align: center; }
-    .hd-logo { font-size: 1.4rem; }
-    .hd-title { font-size: 1rem; font-weight: 700; margin-top: 1px; }
-    .hd-room { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 5px; }
-    .hd-rlbl { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
-    .hd-rbadge { background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24); color: var(--blue); font-size: .78rem; font-weight: 700; letter-spacing: .1em; padding: 2px 11px; border-radius: 20px; cursor: pointer; }
-    .hd-chint { font-size: .66rem; color: var(--muted); margin-top: 2px; opacity: 0; transition: opacity .3s; height: .8em; }
+    .hd { width: 100%; }
+    /* Строка: [лево: лого+название] [центр: кнопка мута] */
+    .hd-top { display: flex; align-items: center; position: relative; }
+    .hd-left { display: flex; align-items: center; gap: 6px; }
+    .hd-logo { font-size: 1.2rem; line-height: 1; }
+    .hd-title { font-size: .95rem; font-weight: 700; }
+    .hd-room { display: flex; align-items: center; gap: 7px; margin-top: 5px; }
+    .hd-rlbl { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+    .hd-rbadge { background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24); color: var(--blue); font-size: .75rem; font-weight: 700; letter-spacing: .1em; padding: 2px 10px; border-radius: 20px; cursor: pointer; }
+    .hd-chint { font-size: .64rem; color: var(--muted); margin-top: 3px; opacity: 0; transition: opacity .3s; height: .75em; }
     .hd-chint.on { opacity: 1; }
 
     /* Участники */
-    .plist { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 6px; }
-    .pi { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 11px; padding: 9px 13px; border: 1.5px solid transparent; transition: border-color .2s, background .2s; min-height: 42px; }
+    .plist { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 5px; }
+    .pi { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 10px; padding: 8px 12px; border: 1.5px solid transparent; transition: border-color .2s, background .2s; min-height: 38px; }
     .pi.speaking { background: rgba(255,59,48,.06); border-color: rgba(255,59,48,.2); }
     .pi.me-row { cursor: pointer; }
     .pi.me-row:active { background: rgba(74,158,255,.08); }
@@ -34,28 +44,28 @@
     .pd.online { background: var(--blue); box-shadow: 0 0 6px rgba(74,158,255,.4); }
     .pd.speaking { background: var(--red); transform: scale(1.4); box-shadow: 0 0 9px rgba(255,59,48,.6); animation: blink .75s infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
-    .pname { font-size: .9rem; font-weight: 600; flex: 1; }
-    .ptag { font-size: .68rem; color: var(--muted); white-space: nowrap; }
-    .pspk { font-size: .68rem; color: var(--red); white-space: nowrap; }
+    .pname { font-size: .88rem; font-weight: 600; flex: 1; }
+    .ptag { font-size: .66rem; color: var(--muted); white-space: nowrap; }
+    .pspk { font-size: .66rem; color: var(--red); white-space: nowrap; }
 
     /* Инлайн-редактирование имени */
     .pi.editing { border-color: rgba(74,158,255,.35); background: rgba(74,158,255,.06); }
     .pname-input {
       flex: 1; background: transparent; border: none; outline: none;
-      color: var(--text); font-size: .9rem; font-weight: 600;
+      color: var(--text); font-size: .88rem; font-weight: 600;
       font-family: inherit; padding: 0; min-width: 0;
       touch-action: auto; user-select: text; -webkit-user-select: text;
     }
     .pname-input::placeholder { color: var(--muted); }
-    .save-btn { background: var(--green); border: none; border-radius: 7px; color: #000; font-size: .78rem; font-weight: 700; padding: 4px 9px; cursor: pointer; flex-shrink: 0; }
+    .save-btn { background: var(--green); border: none; border-radius: 7px; color: #000; font-size: .75rem; font-weight: 700; padding: 4px 9px; cursor: pointer; flex-shrink: 0; }
 
-    .stline { font-size: .8rem; color: var(--muted); text-align: center; margin-top: 4px; }
+    .stline { font-size: .76rem; color: var(--muted); text-align: center; margin-top: 3px; }
     .stline.tx { color: var(--red); font-weight: 600; }
 
     /* TALK */
-    .tw { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .tw { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #tbtn {
-      width: 178px; height: 178px; border-radius: 50%;
+      width: 168px; height: 168px; border-radius: 50%;
       border: none; outline: none; cursor: pointer;
       -webkit-tap-highlight-color: transparent;
       background: radial-gradient(circle at 38% 35%, #00e87a, #00a84f);
@@ -65,12 +75,13 @@
     }
     #tbtn:disabled { background: radial-gradient(circle at 38% 35%, #222238, #161628); box-shadow: 0 5px 18px rgba(0,0,0,.4); cursor: not-allowed; }
     #tbtn.pressing { background: radial-gradient(circle at 38% 35%, #ff5f55, #cc2e24); box-shadow: 0 0 0 9px rgba(255,59,48,.1),0 0 0 18px rgba(255,59,48,.04),0 7px 26px rgba(255,59,48,.5),inset 0 2px 0 rgba(255,255,255,.12),inset 0 -3px 7px rgba(0,0,0,.3); transform: scale(.95); }
-    .bicon { font-size: 2rem; pointer-events: none; }
-    .blbl { font-size: .95rem; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.95); pointer-events: none; }
-    .thint { color: var(--muted); font-size: .76rem; text-align: center; }
+    .bicon { font-size: 1.9rem; pointer-events: none; }
+    .blbl { font-size: .92rem; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.95); pointer-events: none; }
 
-    /* Mute */
-    #mbtn { width: 54px; height: 54px; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
+    .thint { color: var(--muted); font-size: .73rem; text-align: center; }
+
+    /* Mute — по центру шапки */
+    #mbtn { position: absolute; left: 50%; transform: translateX(-50%); width: 48px; height: 48px; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
     #mbtn.muted { border-color: var(--red); background: rgba(255,59,48,.12); }
 
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
@@ -81,8 +92,13 @@
 
 <div id="app">
   <div class="hd">
-    <div class="hd-logo">🏔️</div>
-    <div class="hd-title">Рация</div>
+    <div class="hd-top">
+      <div class="hd-left">
+        <div class="hd-logo">🏔️</div>
+        <div class="hd-title">Рация</div>
+      </div>
+      <button id="mbtn">🔊</button>
+    </div>
     <div class="hd-room">
       <span class="hd-rlbl">Комната</span>
       <span class="hd-rbadge" id="m-room">—</span>
@@ -99,8 +115,6 @@
     <button id="tbtn" disabled><div class="bicon">🎙️</div><div class="blbl">TALK</div></button>
     <div class="thint" id="m-hint">Удерживай кнопку чтобы говорить</div>
   </div>
-
-  <button id="mbtn">🔊</button>
 </div>
 
 <div id="toast"></div>
