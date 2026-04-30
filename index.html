@@ -277,19 +277,6 @@ async function startApp(initialName) {
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
-  // Тихий трек из AudioContext — чтобы sender никогда не был null.
-  // replaceTrack(audio→audio) надёжно работает везде, replaceTrack(null→audio) — нет.
-  let _silent = null;
-  function getSilentTrack() {
-    if (_silent) return _silent;
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const dst = ctx.createMediaStreamDestination();
-      _silent = dst.stream.getAudioTracks()[0];
-    } catch(e) {}
-    return _silent;
-  }
-
   // Разблокировать autoplay при любом касании (Chrome требует жест)
   function tryPlayAll() {
     document.querySelectorAll('audio').forEach(a => { if(a.paused) a.play().catch(()=>{}); });
@@ -323,22 +310,20 @@ async function startApp(initialName) {
     return pc;
   }
 
-  // Заменить тихий трек на микрофон (audio→audio, всегда работает)
+  // Поставить микрофон в sender. Ищем audio sender (null или audio kind).
   function putMicInSender(pc) {
     if (!localStream) return;
     const mic = localStream.getAudioTracks()[0];
     if (!mic) return;
-    const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+    const sender = pc.getSenders().find(s => !s.track || s.track.kind === 'audio');
     if (sender) sender.replaceTrack(mic).catch(()=>{});
   }
 
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
-    // addTrack с реальным (тихим) треком: SDP имеет MSID, ontrack у собеседника
-    // получает streams[0] корректно. replaceTrack(mic) потом работает везде.
-    const st = getSilentTrack();
-    const ss = st ? new MediaStream([st]) : new MediaStream();
-    if (st) pc.addTrack(st, ss); else pc.addTransceiver('audio', {direction:'sendrecv', streams:[ss]});
+    // addTransceiver с потоком → SDP имеет MSID → ontrack у собеседника
+    // получает streams[0] корректно, без пересогласовки при нажатии TALK
+    pc.addTransceiver('audio', {direction:'sendrecv', streams:[new MediaStream()]});
     if (localStream) putMicInSender(pc);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -351,13 +336,11 @@ async function startApp(initialName) {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      // Ставим тихий трек в sender и принудительно sendrecv —
-      // иначе Chrome может создать answer с recvonly и ontrack у offerer не сработает
-      const st = getSilentTrack();
+      // Принудительно sendrecv — иначе Chrome создаёт answer с recvonly
+      // (нет трека → recvonly), и ontrack у offerer не сработает
       for (const t of pc.getTransceivers()) {
-        if (t.receiver.track?.kind === 'audio') {
+        if (t.receiver.track?.kind === 'audio' && t.direction !== 'sendrecv') {
           t.direction = 'sendrecv';
-          if (st && !t.sender.track) await t.sender.replaceTrack(st).catch(()=>{});
         }
       }
       if (localStream) putMicInSender(pc);
