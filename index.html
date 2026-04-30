@@ -277,7 +277,20 @@ async function startApp(initialName) {
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
-  // Разблокировать autoplay при любом касании (Chrome блокирует без жеста)
+  // Тихий трек из AudioContext — чтобы sender никогда не был null.
+  // replaceTrack(audio→audio) надёжно работает везде, replaceTrack(null→audio) — нет.
+  let _silent = null;
+  function getSilentTrack() {
+    if (_silent) return _silent;
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const dst = ctx.createMediaStreamDestination();
+      _silent = dst.stream.getAudioTracks()[0];
+    } catch(e) {}
+    return _silent;
+  }
+
+  // Разблокировать autoplay при любом касании (Chrome требует жест)
   function tryPlayAll() {
     document.querySelectorAll('audio').forEach(a => { if(a.paused) a.play().catch(()=>{}); });
   }
@@ -292,16 +305,9 @@ async function startApp(initialName) {
     pc.ontrack = ({track, streams}) => {
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
-      // streams[0] может быть пустым если addTransceiver вызван без потока
-      if (streams && streams[0]) {
-        a.srcObject = streams[0];
-      } else {
-        if (!a.srcObject) a.srcObject = new MediaStream();
-        const ms = a.srcObject;
-        if (!ms.getTracks().find(t => t.id===track.id)) ms.addTrack(track);
-      }
+      a.srcObject = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       a.muted = muted;
-      a.play().catch(()=>{}); // явный play — autoplay может быть заблокирован
+      a.play().catch(()=>{});
     };
     pc.onicecandidate = ({candidate}) => {
       if(!candidate) return;
@@ -317,38 +323,51 @@ async function startApp(initialName) {
     return pc;
   }
 
-  // Хелпер: поставить трек микрофона через replaceTrack (без пересогласовки)
+  // Заменить тихий трек на микрофон (audio→audio, всегда работает)
   function putMicInSender(pc) {
     if (!localStream) return;
-    const micTrack = localStream.getAudioTracks()[0];
-    if (!micTrack) return;
-    const sender = pc.getSenders().find(s => !s.track || s.track.kind==='audio');
-    if (sender) sender.replaceTrack(micTrack).catch(()=>{});
+    const mic = localStream.getAudioTracks()[0];
+    if (!mic) return;
+    const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+    if (sender) sender.replaceTrack(mic).catch(()=>{});
   }
 
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
-    // addTransceiver с пустым потоком: SDP содержит MSID → ontrack у собеседника
-    // получает streams[0] правильно, без пересогласовки при нажатии TALK
-    pc.addTransceiver('audio', {direction:'sendrecv', streams:[new MediaStream()]});
+    // addTrack с реальным (тихим) треком: SDP имеет MSID, ontrack у собеседника
+    // получает streams[0] корректно. replaceTrack(mic) потом работает везде.
+    const st = getSilentTrack();
+    const ss = st ? new MediaStream([st]) : new MediaStream();
+    if (st) pc.addTrack(st, ss); else pc.addTransceiver('audio', {direction:'sendrecv', streams:[ss]});
     if (localStream) putMicInSender(pc);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
   }
-  async function handleOffer(remoteUid,data) {
+
+  async function handleOffer(remoteUid, data) {
     const pc = await makePC(remoteUid);
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data));
+      // Ставим тихий трек в sender и принудительно sendrecv —
+      // иначе Chrome может создать answer с recvonly и ontrack у offerer не сработает
+      const st = getSilentTrack();
+      for (const t of pc.getTransceivers()) {
+        if (t.receiver.track?.kind === 'audio') {
+          t.direction = 'sendrecv';
+          if (st && !t.sender.track) await t.sender.replaceTrack(st).catch(()=>{});
+        }
+      }
+      if (localStream) putMicInSender(pc);
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
-      if (localStream) putMicInSender(pc);
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
     } catch(_) {}
   }
-  async function handleAnswer(remoteUid,data) {
+
+  async function handleAnswer(remoteUid, data) {
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(_) {}
