@@ -309,7 +309,26 @@ async function startApp(initialName) {
     fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
     fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
   });
-  setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 25000);
+
+  // Heartbeat — обновлять ts каждые 20 сек
+  setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 20000);
+
+  // Чистка призраков — удаляем пользователей без heartbeat > 60 сек
+  async function cleanGhosts() {
+    const res = await fetch(fbUrl(room,'users'));
+    const all = await res.json();
+    if (!all) return;
+    const now = Date.now();
+    Object.entries(all).forEach(([uid, data]) => {
+      if (uid === myUid) return;
+      if (!data || !data.ts || now - data.ts > 60000) {
+        fbDel(room,'users/'+uid);
+        fbDel(room,'talking/'+uid);
+      }
+    });
+  }
+  cleanGhosts();
+  setInterval(cleanGhosts, 30000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   fbListen(room,'users',(path,data)=>{
