@@ -313,7 +313,7 @@ async function startApp(initialName) {
         try {
           const offer = await pc.createOffer({iceRestart:true});
           await pc.setLocalDescription(offer);
-          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
         } catch(e) {}
       }
     };
@@ -325,6 +325,8 @@ async function startApp(initialName) {
     return pc;
   }
 
+  const SESSION_START = Date.now(); // метка: сигналы старше этого момента — мусор
+
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
     // addTransceiver: аудио-канал есть в SDP с самого начала.
@@ -332,10 +334,12 @@ async function startApp(initialName) {
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:SESSION_START});
   }
 
   async function handleOffer(remoteUid, data) {
+    // Игнорируем сигналы, которые старше нашей сессии (мусор от предыдущих)
+    if (data.ts && data.ts < SESSION_START - 5000) return;
     const pc = await makePC(remoteUid);
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
@@ -350,15 +354,25 @@ async function startApp(initialName) {
       }
       const ans = await pc.createAnswer();
       await pc.setLocalDescription(ans);
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp,ts:SESSION_START});
     } catch(e) {}
   }
 
   async function handleAnswer(remoteUid, data) {
+    // Игнорируем протухшие ответы
+    if (data.ts && data.ts < SESSION_START - 5000) return;
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
   }
+
+  // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
+  // Дожидаемся удаления, чтобы SSE не получил протухшие сигналы при подключении
+  await Promise.all([
+    fbDel(room,'signals/'+myUid),
+    fbDel(room,'ice/'+myUid),
+    fbDel(room,'talking/'+myUid),
+  ]);
 
   // ── Presence ─────────────────────────────────────────────────────────────
   presence[myUid] = {name:currentMyName, speaking:false};
