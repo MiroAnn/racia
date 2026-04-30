@@ -179,7 +179,7 @@ async function startApp(initialName) {
     // Сначала себя, потом остальных
     const sorted = [[myUid, presence[myUid]], ...Object.entries(presence).filter(([uid])=>uid!==myUid)];
     sorted.forEach(([uid, p]) => {
-      if (!p) return;
+      if (!p || !p.name) return; // пропускаем записи без имени (призраки)
       const { name, speaking } = p;
       const isMe = uid === myUid;
       const div = document.createElement('div');
@@ -251,10 +251,14 @@ async function startApp(initialName) {
   }
 
   // ── Микрофон ─────────────────────────────────────────────────────────────
-  async function getStream() {
+  // Вызывать только из обработчика нажатия (user gesture) — иначе iOS блокирует
+  async function acquireStream() {
     if (localStream) return localStream;
-    localStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-    localStream.getAudioTracks().forEach(t=>t.enabled=false);
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation:true, noiseSuppression:true, autoGainControl:true},
+      video: false
+    });
+    localStream.getAudioTracks().forEach(t => t.enabled = false);
     return localStream;
   }
 
@@ -264,7 +268,18 @@ async function startApp(initialName) {
     const pc = new RTCPeerConnection(ICE_CFG);
     peers[remoteUid] = {pc, iceTx:0};
 
-    try { const s=await getStream(); s.getTracks().forEach(t=>pc.addTrack(t,s)); } catch(_){}
+    // Если поток уже есть — добавляем треки сразу
+    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    // Пересогласование: срабатывает когда addTrack вызывается после установки соединения
+    pc.onnegotiationneeded = async () => {
+      if (pc.signalingState !== 'stable') return;
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        fbPut(room, 'signals/'+remoteUid+'/'+myUid, {type:'offer', sdp:offer.sdp});
+      } catch(_) {}
+    };
 
     pc.ontrack = ({streams}) => {
       let a=document.getElementById('a-'+remoteUid);
@@ -313,7 +328,7 @@ async function startApp(initialName) {
   // Heartbeat — обновлять ts каждые 20 сек
   setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 20000);
 
-  // Чистка призраков — удаляем пользователей без heartbeat > 60 сек
+  // Чистка призраков — удаляем записи без имени или без heartbeat > 60 сек
   async function cleanGhosts() {
     const res = await fetch(fbUrl(room,'users'));
     const all = await res.json();
@@ -321,11 +336,14 @@ async function startApp(initialName) {
     const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      if (!data || !data.ts || now - data.ts > 60000) {
+      const isGhost = !data || !data.name || !data.ts || (now - data.ts > 60000);
+      if (isGhost) {
         fbDel(room,'users/'+uid);
         fbDel(room,'talking/'+uid);
+        delete presence[uid];
       }
     });
+    renderList();
   }
   cleanGhosts();
   setInterval(cleanGhosts, 30000);
@@ -334,7 +352,9 @@ async function startApp(initialName) {
   fbListen(room,'users',(path,data)=>{
     const proc=(uid,d)=>{
       if(uid===myUid)return;
-      if(!d){
+      if(!d || !d.name){
+        // нет данных или нет имени — призрак, удаляем
+        if(d && !d.name) { fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid); }
         delete presence[uid];
         if(peers[uid]){try{peers[uid].pc.close();}catch(_){} delete peers[uid];}
         const a=document.getElementById('a-'+uid); if(a)a.remove();
@@ -373,8 +393,18 @@ async function startApp(initialName) {
   async function startTalk() {
     if(talking||tbtn.disabled)return;
     try {
-      const s=await getStream(); s.getAudioTracks().forEach(t=>t.enabled=true);
-      Object.values(peers).forEach(({pc})=>{ if(pc.getSenders().length===0) s.getTracks().forEach(t=>pc.addTrack(t,s)); });
+      // Получаем микрофон здесь — это user gesture, iOS разрешает
+      const s = await acquireStream();
+
+      // Первый раз: добавляем трек во все уже открытые соединения
+      // onnegotiationneeded запустит пересогласование автоматически
+      Object.values(peers).forEach(({pc}) => {
+        if (!pc.getSenders().some(sender => sender.track)) {
+          s.getTracks().forEach(t => pc.addTrack(t, s));
+        }
+      });
+
+      s.getAudioTracks().forEach(t => t.enabled = true);
       talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent='Отпусти, чтобы замолчать';
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
