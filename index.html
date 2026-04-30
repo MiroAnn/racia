@@ -121,7 +121,7 @@
 <script>
 // ── Конфиг ───────────────────────────────────────────────────────────────────
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
-const ICE_CFG = { iceCandidatePoolSize: 4, iceServers: [
+const ICE_CFG = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
@@ -373,39 +373,39 @@ async function startApp(initialName) {
 
   const SESSION_START = Date.now(); // ID текущей сессии
 
+  const SIG_TS = Date.now(); // метка сессии для фильтрации старых сигналов
+
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
-    // addTransceiver: аудио-канал есть в SDP с самого начала.
-    // При нажатии TALK просто replaceTrack — никакой пересогласовки не нужно.
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
-    // Гарантируем sendrecv в offer-е (на случай если Chrome вдруг поставил sendonly)
     const sdp = offer.sdp
       .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
       .replace(/\r\na=inactive/g, '\r\na=sendrecv');
     await pc.setLocalDescription({type:'offer', sdp});
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp,ts:SIG_TS});
   }
 
   async function handleOffer(remoteUid, data) {
+    // Игнорируем сигналы старше 60 сек — защита если cleanup при старте не сработал
+    if (data.ts && Date.now() - data.ts > 60000) return;
     const pc = await makePC(remoteUid);
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data));
       const ans = await pc.createAnswer();
-      // Chrome без локального трека пишет a=recvonly в answer — тогда отвечающий
-      // не может отправить звук даже после replaceTrack, без повторной пересогласовки.
-      // Правим SDP напрямую: это надёжнее чем менять t.direction (Chrome игнорирует).
+      // Chrome без локального трека пишет a=recvonly — правим SDP напрямую
       const sdp = ans.sdp
         .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
         .replace(/\r\na=inactive/g, '\r\na=sendrecv');
       await pc.setLocalDescription({type:'answer', sdp});
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:SIG_TS});
     } catch(e) {}
   }
 
   async function handleAnswer(remoteUid, data) {
+    if (data.ts && Date.now() - data.ts > 60000) return;
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
@@ -442,29 +442,32 @@ async function startApp(initialName) {
   window.addEventListener('beforeunload', onLeave);
   window.addEventListener('pagehide', onLeave);
 
-  // Heartbeat — обновлять ts каждые 15 сек
-  setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 15000);
+  // Heartbeat — полная запись каждые 20 сек.
+  // Важно: обновлять ВСЮ запись (не только /ts), чтобы если cleanGhosts случайно
+  // удалил нас — мы восстановились с именем и sid, а не висели призраком без имени.
+  setInterval(()=>fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START}), 20000);
 
-  // Чистка призраков — только записи без имени или без heartbeat > 5 минут
-  // (5 мин, а не 60 сек — мобильный браузер тормозит фоновые вкладки)
+  // Чистка призраков: нет имени → удаляем сразу; нет heartbeat > 90 сек → призрак.
+  // Heartbeat каждые 20 сек, 90 сек = 4 цикла + запас на медленный мобайл.
   async function cleanGhosts() {
-    const res = await fetch(fbUrl(room,'users'));
-    const all = await res.json();
+    let all;
+    try { const res = await fetch(fbUrl(room,'users')); all = await res.json(); } catch(e){ return; }
     if (!all) return;
     const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      const isGhost = !data || !data.name || (data.ts && now - data.ts > 45000);
+      const isGhost = !data || !data.name || (data.ts && now - data.ts > 90000);
       if (isGhost) {
         fbDel(room,'users/'+uid);
         fbDel(room,'talking/'+uid);
         delete presence[uid];
+        dropPeer(uid); // закрыть PC сразу, не ждать SSE
       }
     });
     renderList();
   }
   cleanGhosts();
-  setInterval(cleanGhosts, 20000);
+  setInterval(cleanGhosts, 40000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   // sid каждого пира, которого мы видим (чтобы детектировать перезагрузку)
