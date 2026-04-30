@@ -121,7 +121,7 @@
 <script>
 // ── Конфиг ───────────────────────────────────────────────────────────────────
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
-const ICE_CFG = { iceServers: [
+const ICE_CFG = { iceCandidatePoolSize: 4, iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
@@ -327,8 +327,9 @@ async function startApp(initialName) {
 
   async function sendOffer(remoteUid) {
     const pc = await makePC(remoteUid);
-    // Если микрофон уже есть — добавляем сразу, иначе добавим при нажатии TALK
-    if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    // addTransceiver: аудио-канал есть в SDP с самого начала.
+    // При нажатии TALK просто replaceTrack — никакой пересогласовки не нужно.
+    pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
@@ -339,14 +340,9 @@ async function startApp(initialName) {
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
-      // Добавляем трек ДО setRemoteDescription — тогда addTrack попадёт в answer
-      // и собеседник увидит наш sendrecv, а не recvonly
-      if (localStream && !pc.getSenders().some(s => s.track)) {
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-      }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      // Принудительно sendrecv — Chrome без трека пишет recvonly в answer,
-      // тогда ontrack у другой стороны не сработает
+      // Принудительно sendrecv — иначе Chrome без трека ставит recvonly в answer
+      // и ontrack у инициатора не срабатывает (он не узнаёт, что мы тоже можем говорить)
       for (const t of pc.getTransceivers()) {
         if (t.receiver.track?.kind === 'audio' && t.direction !== 'sendrecv') {
           t.direction = 'sendrecv';
@@ -442,22 +438,28 @@ async function startApp(initialName) {
   async function startTalk() {
     if(talking||tbtn.disabled)return;
     try {
-      // acquireStream — только здесь, это user gesture (iOS + Chrome требуют)
+      // acquireStream — только из user gesture (iOS + Chrome требуют)
       const s = await acquireStream();
       s.getAudioTracks().forEach(t => t.enabled = true);
+      const audioTrack = s.getAudioTracks()[0];
 
-      // Для каждого собеседника: добавляем трек если ещё нет,
-      // потом явно отправляем новый offer (не полагаемся на onnegotiationneeded)
       for (const [remoteUid, {pc}] of Object.entries(peers)) {
-        if (!pc.getSenders().some(snd => snd.track)) {
-          s.getTracks().forEach(t => pc.addTrack(t, s));
-        }
-        if (pc.signalingState === 'stable') {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
-          } catch(e) {}
+        // Ищем уже существующий audio-sender (addTransceiver создаёт sender с track=null).
+        // НЕ используем addTrack — это создаст второй трансивер и сломает SDP.
+        const sender = pc.getSenders().find(snd => !snd.track || snd.track.kind === 'audio');
+        if (sender) {
+          // replaceTrack не требует пересогласовки — канал уже есть в SDP.
+          sender.replaceTrack(audioTrack).catch(()=>{});
+        } else {
+          // Fallback: sender-а нет вообще → addTrack + явный новый offer
+          pc.addTrack(audioTrack, s);
+          if (pc.signalingState === 'stable') {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+            } catch(e) {}
+          }
         }
       }
 
