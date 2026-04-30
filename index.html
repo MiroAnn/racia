@@ -278,9 +278,52 @@ async function startApp(initialName) {
     if (localStream) return localStream;
     // audio:true — максимальная совместимость с iOS Safari
     localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
-    localStream.getAudioTracks().forEach(t => t.enabled = false);
+    localStream.getAudioTracks().forEach(t => {
+      t.enabled = false;
+      // Если ОС убила трек (iOS при переключении вкладок) — сбрасываем стрим
+      t.onended = () => {
+        localStream = null;
+        if (talking) {
+          stopTalk();
+          toast(OPEN_MODE ? 'Микрофон отключился — нажми кнопку снова' : 'Микрофон отключился');
+        }
+      };
+    });
     return localStream;
   }
+
+  // ── Восстановление после возврата на вкладку ──────────────────────────────
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+
+    // 1. Проверяем микрофонный трек
+    if (localStream) {
+      const track = localStream.getAudioTracks()[0];
+      if (!track || track.readyState === 'ended') {
+        // iOS убила трек пока мы были на другой вкладке
+        localStream = null;
+        if (talking) {
+          stopTalk();
+          toast(OPEN_MODE ? 'Нажми кнопку — микрофон отключился' : 'Микрофон отключился');
+        }
+      } else if (talking && track.readyState === 'live') {
+        // Android: трек жив — просто переключаем обратно
+        track.enabled = true;
+      }
+    }
+
+    // 2. Рестартуем ICE-соединения, которые упали пока вкладка была скрыта
+    for (const [remoteUid, {pc}] of Object.entries(peers)) {
+      if ((pc.connectionState === 'failed' || pc.connectionState === 'disconnected')
+          && pc.signalingState === 'stable') {
+        try {
+          const offer = await pc.createOffer({iceRestart:true});
+          await pc.setLocalDescription(offer);
+          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+        } catch(e) {}
+      }
+    }
+  });
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
@@ -336,8 +379,12 @@ async function startApp(initialName) {
     // При нажатии TALK просто replaceTrack — никакой пересогласовки не нужно.
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+    // Гарантируем sendrecv в offer-е (на случай если Chrome вдруг поставил sendonly)
+    const sdp = offer.sdp
+      .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
+      .replace(/\r\na=inactive/g, '\r\na=sendrecv');
+    await pc.setLocalDescription({type:'offer', sdp});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp});
   }
 
   async function handleOffer(remoteUid, data) {
@@ -346,16 +393,15 @@ async function startApp(initialName) {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      // Принудительно sendrecv — иначе Chrome без трека ставит recvonly в answer
-      // и ontrack у инициатора не срабатывает (он не узнаёт, что мы тоже можем говорить)
-      for (const t of pc.getTransceivers()) {
-        if (t.receiver.track?.kind === 'audio' && t.direction !== 'sendrecv') {
-          t.direction = 'sendrecv';
-        }
-      }
       const ans = await pc.createAnswer();
-      await pc.setLocalDescription(ans);
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp:ans.sdp});
+      // Chrome без локального трека пишет a=recvonly в answer — тогда отвечающий
+      // не может отправить звук даже после replaceTrack, без повторной пересогласовки.
+      // Правим SDP напрямую: это надёжнее чем менять t.direction (Chrome игнорирует).
+      const sdp = ans.sdp
+        .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
+        .replace(/\r\na=inactive/g, '\r\na=sendrecv');
+      await pc.setLocalDescription({type:'answer', sdp});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp});
     } catch(e) {}
   }
 
@@ -372,12 +418,15 @@ async function startApp(initialName) {
   }
 
   // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
-  // Дожидаемся удаления, чтобы SSE не получил протухшие сигналы при подключении
-  await Promise.all([
-    fbDel(room,'signals/'+myUid),
-    fbDel(room,'ice/'+myUid),
-    fbDel(room,'talking/'+myUid),
-  ]);
+  // Дожидаемся удаления, чтобы SSE не получил протухшие сигналы при подключении.
+  // try/catch: если Firebase недоступен — не блокируем запуск приложения.
+  try {
+    await Promise.all([
+      fbDel(room,'signals/'+myUid),
+      fbDel(room,'ice/'+myUid),
+      fbDel(room,'talking/'+myUid),
+    ]);
+  } catch(e) {}
 
   // ── Presence ─────────────────────────────────────────────────────────────
   presence[myUid] = {name:currentMyName, speaking:false};
@@ -385,13 +434,16 @@ async function startApp(initialName) {
   // Другие участники детектируют смену sid → пересоздают соединение.
   fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
 
-  window.addEventListener('beforeunload',()=>{
+  // Удаляем себя при закрытии: и beforeunload, и pagehide (pagehide надёжнее на мобиле)
+  function onLeave() {
     fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
     fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
-  });
+  }
+  window.addEventListener('beforeunload', onLeave);
+  window.addEventListener('pagehide', onLeave);
 
-  // Heartbeat — обновлять ts каждые 20 сек (sid не меняется — это маркер сессии)
-  setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 20000);
+  // Heartbeat — обновлять ts каждые 15 сек
+  setInterval(()=>fbPut(room,'users/'+myUid+'/ts',Date.now()), 15000);
 
   // Чистка призраков — только записи без имени или без heartbeat > 5 минут
   // (5 мин, а не 60 сек — мобильный браузер тормозит фоновые вкладки)
@@ -402,7 +454,7 @@ async function startApp(initialName) {
     const now = Date.now();
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      const isGhost = !data || !data.name || (data.ts && now - data.ts > 120000);
+      const isGhost = !data || !data.name || (data.ts && now - data.ts > 45000);
       if (isGhost) {
         fbDel(room,'users/'+uid);
         fbDel(room,'talking/'+uid);
@@ -412,7 +464,7 @@ async function startApp(initialName) {
     renderList();
   }
   cleanGhosts();
-  setInterval(cleanGhosts, 60000);
+  setInterval(cleanGhosts, 20000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   // sid каждого пира, которого мы видим (чтобы детектировать перезагрузку)
