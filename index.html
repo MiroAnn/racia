@@ -589,7 +589,7 @@ async function startApp(initialName) {
         a.muted = true;
         a.play().then(() => {
           a.muted = muted;
-          hideAudioUnlock(); // звук пошёл — кнопка больше не нужна
+          hideAudioUnlock();
         }).catch(e => dbg('tryplay-fail', String(e)));
       }
     });
@@ -706,12 +706,20 @@ async function startApp(initialName) {
 
   async function handleOffer(remoteUid, data) {
     if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
-    // Skip if ICE already connected — prevents SSE fast-reconnect from replaying offer and breaking working connection
     const existingP = peers[remoteUid];
     if (existingP) {
       const ice = existingP.pc.iceConnectionState;
+      // Не обрабатываем offer если ICE уже подключён (SSE-replay защита)
       if (ice === 'connected' || ice === 'completed') {
         dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return;
+      }
+      // Glare resolution: оба устройства прислали offer одновременно.
+      // Тот у кого меньший UID — естественный offerer, он игнорирует чужой offer.
+      // Тот у кого больший UID — принимает offer другого (становится answerer).
+      // Это гарантирует что ontrack сработает через handleAnswer, а не через проблемный rollback.
+      if (myUid < remoteUid && existingP.pc.signalingState === 'have-local-offer') {
+        dbg('offer-ignored glare', remoteUid.slice(0,6)+' natural-offerer-wins');
+        return;
       }
     }
     dbg('handleOffer←', remoteUid.slice(0,6));
@@ -749,7 +757,10 @@ async function startApp(initialName) {
       try{peers[remoteUid].pc.close();}catch(_){}
       delete peers[remoteUid];
     }
-    const a = document.getElementById('a-'+remoteUid); if(a) a.remove();
+    // Не удаляем audio-элемент — только сбрасываем srcObject.
+    // ontrack новой сессии переиспользует элемент (иначе при glare ontrack не срабатывает).
+    const a = document.getElementById('a-'+remoteUid);
+    if (a) a.srcObject = null;
     if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
   }
 
