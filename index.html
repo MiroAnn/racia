@@ -86,8 +86,8 @@
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
-    /* Кнопка разблокировки autoplay */
-    #unlock-audio { display:none; position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:var(--blue); color:#fff; border:none; border-radius:22px; padding:12px 24px; font-size:.95rem; font-weight:700; cursor:pointer; box-shadow:0 4px 20px rgba(74,158,255,.5); z-index:100; white-space:nowrap; animation: pulse-btn 1.5s infinite; }
+    /* Кнопка разблокировки autoplay — z-index выше debug панели (999) */
+    #unlock-audio { display:none; position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:var(--blue); color:#fff; border:none; border-radius:22px; padding:12px 24px; font-size:.95rem; font-weight:700; cursor:pointer; box-shadow:0 4px 20px rgba(74,158,255,.5); z-index:1001; white-space:nowrap; animation: pulse-btn 1.5s infinite; }
     #unlock-audio.on { display:block; }
     @keyframes pulse-btn { 0%,100%{box-shadow:0 4px 20px rgba(74,158,255,.5)} 50%{box-shadow:0 4px 32px rgba(74,158,255,.9)} }
 
@@ -163,19 +163,26 @@
 <script>
 // ── Конфиг ───────────────────────────────────────────────────────────────────
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
-const ICE_CFG = { iceServers: [
+// ICE серверы загружаются из Metered API (свежие credentials каждый раз)
+// Запасной вариант — статические credentials
+const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  // Metered.ca TURN — надёжный платный сервис (500 МБ/мес бесплатно)
   { urls: 'turn:a.relay.metered.ca:80',
-    username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
-  { urls: 'turn:a.relay.metered.ca:80?transport=tcp',
     username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
   { urls: 'turn:a.relay.metered.ca:443?transport=tcp',
     username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
   { urls: 'turns:a.relay.metered.ca:443',
     username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
-]};
+];
+let ICE_SERVERS = ICE_FALLBACK;
+async function loadIceServers() {
+  try {
+    const r = await fetch('https://annmiro.metered.live/api/v1/turn/credentials?apiKey=3441f7c12cc6972242a1364ddba767e06a7c');
+    const s = await r.json();
+    if (s && s.length) { ICE_SERVERS = s; dbg('TURN-api✓', s.length+' servers'); }
+  } catch(e) { dbg('TURN-api-fallback', String(e)); }
+}
+loadIceServers();
 
 // ── Смешные имена ─────────────────────────────────────────────────────────────
 const ADJ  = ['Быстрый','Лихой','Дерзкий','Крутой','Смелый','Дикий','Хитрый','Ловкий','Шустрый','Удалой','Бравый','Лютый','Сонный','Хмурый','Весёлый','Мощный','Пушистый','Звонкий','Ярый','Хрустящий'];
@@ -500,7 +507,7 @@ async function startApp(initialName) {
 
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
-    const pc = new RTCPeerConnection(ICE_CFG);
+    const pc = new RTCPeerConnection({iceServers: ICE_SERVERS});
     peers[remoteUid] = {pc, iceTx:0};
 
     pc.ontrack = ({track, streams}) => {
