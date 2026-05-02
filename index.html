@@ -486,6 +486,11 @@ async function startApp(initialName) {
   let audioBlocked = false;
 
   function tryPlayAll() {
+    // ШАГ 1 — СИНХРОННО в стеке жеста: iOS Safari принимает play() только так
+    document.querySelectorAll('audio').forEach(a => {
+      if (a.srcObject && a.paused) { a.muted = false; a.play().catch(()=>{}); }
+    });
+    // ШАГ 2 — async AudioContext: resume и подключение через GainNode
     const ctx = getAudioCtx();
     ctx.resume().then(() => {
       document.querySelectorAll('audio').forEach(a => {
@@ -494,7 +499,6 @@ async function startApp(initialName) {
           // AudioContext надёжнее — используем его, audio элемент заглушаем
           if (playViaCtx(uid, a.srcObject)) { a.muted = true; return; }
         }
-        if (a.paused && a.srcObject) a.play().catch(()=>{});
       });
       audioBlocked = false;
       unlockBtn.classList.remove('on');
@@ -504,7 +508,12 @@ async function startApp(initialName) {
     if (!audioBlocked) { audioBlocked=true; unlockBtn.classList.add('on'); }
   }
 
-  const hideUnlock = () => { tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; };
+  const hideUnlock = () => {
+    tryPlayAll(); // play() вызывается синхронно внутри (iOS требует)
+    unlockBtn.classList.remove('on');
+    audioBlocked = false;
+    toast('Звук разблокирован 🔊');
+  };
   unlockBtn.addEventListener('click', hideUnlock);
   unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); hideUnlock(); });
 
@@ -816,7 +825,7 @@ async function startApp(initialName) {
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
     document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
     // Управляем громкостью через AudioContext gain nodes
-    Object.values(peerNodes).forEach(gain=>{ gain.gain.value = muted ? 0 : 1; });
+    Object.values(peerNodes).forEach(gain=>{ gain.gain.value = muted ? 0 : VOLUME; });
     toast(muted?'Звук выключен':'Звук включён');
   });
 }
