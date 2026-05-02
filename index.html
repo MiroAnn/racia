@@ -652,7 +652,8 @@ async function startApp(initialName) {
         peers[remoteUid].disconnectTimer = null;
       }
       if (pc.connectionState === 'failed') {
-        if (pc.signalingState === 'stable') {
+        // Только оферрор (myUid < remoteUid) вправе инициировать или перезапускать
+        if (myUid < remoteUid && pc.signalingState === 'stable') {
           try {
             const offer = await pc.createOffer({iceRestart:true});
             await pc.setLocalDescription(offer);
@@ -663,7 +664,8 @@ async function startApp(initialName) {
         } else {
           dbg('conn-fail-reset', remoteUid.slice(0,6));
           dropPeer(remoteUid);
-          if (presence[remoteUid]) sendOffer(remoteUid);
+          // Только оферрор переотправляет; answerer ждёт входящего offer
+          if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
         }
       } else if (pc.connectionState === 'disconnected') {
         if (peers[remoteUid]) {
@@ -672,7 +674,10 @@ async function startApp(initialName) {
             if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
             dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
             dropPeer(remoteUid);
-            if (presence[remoteUid]) sendOffer(remoteUid);
+            // Только оферрор (myUid < remoteUid) переотправляет offer после сброса;
+            // answerer просто ждёт — иначе оба создают PC в have-local-offer и glare не разрешается
+            if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
+            else if (presence[remoteUid]) dbg('disconnect-wait-offer', remoteUid.slice(0,6));
           }, 2000);
         }
       }
@@ -834,21 +839,9 @@ async function startApp(initialName) {
           presence[uid]={name:d.name,speaking:false};
           if(myUid<uid) {
             sendOffer(uid);
-          } else {
-            // Answerer: ждём offer 5с, если нет — сами инициируем (fix race condition)
-            const capName = d.name;
-            setTimeout(() => {
-              if (!presence[uid]) return;
-              const p = peers[uid];
-              const ice = p && p.pc.iceConnectionState;
-              if (!p || (ice !== 'connected' && ice !== 'completed' && ice !== 'checking')) {
-                dbg('offer-fallback', uid.slice(0,6)+' no offer in 5s');
-                if (p) dropPeer(uid);
-                if (!presence[uid]) presence[uid] = {name:capName, speaking:false};
-                sendOffer(uid);
-              }
-            }, 5000);
           }
+          // answerer (myUid > uid) просто ждёт offer от оферрора — никакого fallback,
+          // иначе оба создают have-local-offer и попадают в неразрешимый glare
         } else {
           presence[uid].name = d.name;
           // Если оферрор и offer завис без ответа >8с — переотправляем
