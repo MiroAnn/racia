@@ -574,13 +574,25 @@ async function startApp(initialName) {
         document.body.appendChild(a);
       }
       a.srcObject = stream;
-      // iOS Safari: play() на muted-элементе всегда разрешён даже в async-коллбэке.
-      // Запускаем muted=true, после старта — снимаем mute.
       a.muted = true;
       a.play().then(() => {
-        a.muted = muted; // Восстанавливаем пользовательский mute-статус
+        a.muted = muted;
         dbg('play-ok', remoteUid.slice(0,6));
-      }).catch(e => dbg('play-fail', String(e)));
+      }).catch(e => {
+        dbg('play-fail', String(e));
+        // play() заблокирован браузером (нет жеста) — ретраим при следующем взаимодействии.
+        // Это гарантирует что звук появится как только пользователь коснётся экрана/нажмёт что-то.
+        const retryPlay = (ev) => {
+          dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
+          a.muted = true;
+          a.play()
+            .then(() => { a.muted = muted; dbg('play-retry-ok', remoteUid.slice(0,6)); })
+            .catch(e2 => dbg('play-retry-fail', String(e2)));
+        };
+        ['click','touchstart','keydown'].forEach(ev =>
+          document.addEventListener(ev, retryPlay, {once:true, passive:true})
+        );
+      });
     };
 
     pc.onicecandidate = ({candidate}) => {
