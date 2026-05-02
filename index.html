@@ -448,15 +448,25 @@ async function startApp(initialName) {
   let audioBlocked = false;
 
   function tryPlayAll() {
+    let anyPlayed = false;
     document.querySelectorAll('audio').forEach(a => {
-      if(a.paused) a.play().then(()=>{ audioBlocked=false; unlockBtn.classList.remove('on'); }).catch(()=>{});
+      if(a.paused && a.srcObject) {
+        a.play().then(()=>{ anyPlayed=true; audioBlocked=false; unlockBtn.classList.remove('on'); }).catch(()=>{});
+      }
     });
   }
   function showUnlockBtn() {
     if (!audioBlocked) { audioBlocked=true; unlockBtn.classList.add('on'); }
   }
-  unlockBtn.addEventListener('click', ()=>{ tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; });
-  unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; });
+  // Показываем кнопку проактивно если есть пиры и аудио на паузе (не ждём ошибки)
+  function checkAutoplay() {
+    const audios = document.querySelectorAll('audio');
+    if ([...audios].some(a => a.paused && a.srcObject)) showUnlockBtn();
+  }
+
+  const hideUnlock = () => { unlockBtn.classList.remove('on'); audioBlocked=false; tryPlayAll(); };
+  unlockBtn.addEventListener('click', hideUnlock);
+  unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); hideUnlock(); });
 
   document.addEventListener('touchstart', tryPlayAll, {passive:true});
   document.addEventListener('mousedown',  tryPlayAll);
@@ -472,7 +482,14 @@ async function startApp(initialName) {
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       a.muted = muted;
-      a.play().catch(e=>{ dbg('play-fail', String(e)); showUnlockBtn(); });
+      a.play().catch(e=>{
+        dbg('play-fail', String(e));
+        showUnlockBtn();
+        // Повторяем через 1с на случай если браузер "разогрелся"
+        setTimeout(()=>{ if(a.paused && a.srcObject) a.play().catch(()=>{}); }, 1000);
+        // Через 3с — точно покажем кнопку
+        setTimeout(checkAutoplay, 3000);
+      });
     };
 
     pc.onicecandidate = ({candidate}) => {
@@ -530,8 +547,14 @@ async function startApp(initialName) {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState, remoteUid.slice(0,6)); return; }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
+      // Устанавливаем sendrecv через API ДО createAnswer — иначе Chrome тихо игнорирует SDP-правку
+      pc.getTransceivers().forEach(tc => {
+        if (tc.receiver.track && tc.receiver.track.kind === 'audio') {
+          try { tc.direction = 'sendrecv'; } catch(_) {}
+        }
+      });
       const ans = await pc.createAnswer();
-      // Chrome без локального трека пишет a=recvonly — правим SDP напрямую
+      // Дополнительная страховка: правим SDP напрямую (на случай если API не сработал)
       const sdp = ans.sdp
         .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
         .replace(/\r\na=inactive/g, '\r\na=sendrecv');
