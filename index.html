@@ -305,6 +305,12 @@ function getAudioCtx() {
 // Глобальный хук: startApp заполняет его после инициализации
 window._tryPlayAll = null;
 
+// gestureReady: true после клика на splash (или сразу в debug-режиме).
+// Офферы не отправляются пока false — чтобы ontrack гарантированно приходил ПОСЛЕ gesture.
+let gestureReady = false;
+const pendingOfferUIDs = new Set(); // UIDs ожидающие sendOffer
+window._onGestureReady = null; // startApp заполняет после инициализации
+
 // ── Сплэш: тап разблокирует AudioContext до прихода любого звука ─────────────
 (function initSplash() {
   const splash = $('splash');
@@ -319,10 +325,14 @@ window._tryPlayAll = null;
     setTimeout(() => { splash.style.display = 'none'; }, 380);
     splash.removeEventListener('click',    enterRoom);
     splash.removeEventListener('touchend', onTouch);
+    // Разблокируем отложенные офферы
+    gestureReady = true;
+    if (window._onGestureReady) window._onGestureReady();
   }
   function onTouch(e) { e.preventDefault(); enterRoom(); }
-  // В debug-режиме сплэш пропускается автоматически
+  // В debug-режиме сплэш пропускается автоматически — gesture считается выданным сразу
   if (DEBUG_MODE) {
+    gestureReady = true;
     splash.style.display = 'none';
     dbg('splash-auto-skip', 'debug mode');
   } else {
@@ -590,8 +600,14 @@ async function startApp(initialName) {
       }
     });
   }
-  // Регистрируем глобально — сплэш вызовет его после resume()
+  // Регистрируем глобально — сплэш вызовет их после gesture
   window._tryPlayAll = tryPlayAll;
+  window._onGestureReady = () => {
+    // Отправляем офферы которые пришли до gesture (другой уже в комнате когда открыл приложение)
+    dbg('gesture-ready', 'pending='+pendingOfferUIDs.size);
+    pendingOfferUIDs.forEach(uid => { if (presence[uid]) sendOffer(uid); });
+    pendingOfferUIDs.clear();
+  };
 
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
@@ -616,15 +632,7 @@ async function startApp(initialName) {
         dbg('play-ok', remoteUid.slice(0,6));
       }).catch(e => {
         dbg('play-fail', String(e));
-        // Если ctx ещё suspended — пользователь ещё не кликал ничего.
-        // В обычном режиме: не показываем кнопку поверх splash — клик на splash
-        // всплывёт до document и сам сработает retryPlay. Никаких лишних шагов.
-        // Unlock кнопку показываем только если:
-        //   a) ctx уже running (gesture был) но play всё равно упал — аномалия
-        //   b) DEBUG_MODE — splash нет, нужна визуальная подсказка
-        const ctxRunning = audioCtx && audioCtx.state === 'running';
-        if (ctxRunning || DEBUG_MODE) showAudioUnlock();
-        else dbg('play-wait-gesture', remoteUid.slice(0,6));
+        showAudioUnlock();
 
         const retryPlay = (ev) => {
           dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
@@ -858,7 +866,14 @@ async function startApp(initialName) {
         if (!presence[uid]) {
           presence[uid]={name:d.name,speaking:false};
           if(myUid<uid) {
-            sendOffer(uid);
+            if (gestureReady) {
+              sendOffer(uid);
+            } else {
+              // Gesture ещё не было (пользователь ещё не кликнул splash).
+              // Откладываем offer — ontrack придёт ПОСЛЕ gesture → play() не упадёт.
+              dbg('offer-deferred', uid.slice(0,6));
+              pendingOfferUIDs.add(uid);
+            }
           }
           // answerer (myUid > uid) просто ждёт offer от оферрора — никакого fallback,
           // иначе оба создают have-local-offer и попадают в неразрешимый glare
