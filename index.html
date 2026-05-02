@@ -85,6 +85,31 @@
 
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
     #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Debug panel ── */
+    #dbg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:999; flex-direction:column; font-family:monospace; font-size:11px; color:#ccc; }
+    #dbg.on { display:flex; }
+    #dbg-head { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #222; flex-shrink:0; }
+    #dbg-head span { color:#fff; font-size:13px; font-weight:700; }
+    #dbg-close { background:none; border:1px solid #444; color:#aaa; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:11px; }
+    #dbg-body { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:10px; }
+    .dbg-peer { background:#111; border-radius:8px; padding:8px 10px; border-left:3px solid #333; }
+    .dbg-peer.ice-connected { border-left-color:#00d46a; }
+    .dbg-peer.ice-checking  { border-left-color:#f59e0b; }
+    .dbg-peer.ice-failed    { border-left-color:#ff3b30; }
+    .dbg-peer.ice-new       { border-left-color:#4a9eff; }
+    .dbg-pname { color:#fff; font-weight:700; margin-bottom:4px; }
+    .dbg-row   { display:flex; gap:6px; margin-top:2px; }
+    .dbg-lbl   { color:#555; min-width:60px; }
+    .dbg-val   { color:#aaa; }
+    .dbg-val.ok  { color:#00d46a; }
+    .dbg-val.bad { color:#ff3b30; }
+    .dbg-val.mid { color:#f59e0b; }
+    #dbg-log { background:#0a0a14; border-radius:8px; padding:8px 10px; flex:1; overflow-y:auto; min-height:120px; }
+    .dbg-entry { padding:2px 0; border-bottom:1px solid #111; }
+    .dbg-entry .t { color:#444; margin-right:6px; }
+    .dbg-entry .ev { color:#7dd3fc; }
+    .dbg-entry .detail { color:#6b7280; }
   </style>
 </head>
 <body>
@@ -117,6 +142,17 @@
 </div>
 
 <div id="toast"></div>
+
+<div id="dbg">
+  <div id="dbg-head">
+    <span>🔧 Debug</span>
+    <button id="dbg-close">Закрыть</button>
+  </div>
+  <div id="dbg-body">
+    <div id="dbg-peers"></div>
+    <div id="dbg-log"></div>
+  </div>
+</div>
 
 <script>
 // ── Конфиг ───────────────────────────────────────────────────────────────────
@@ -163,6 +199,68 @@ $('m-room').textContent = room;
 
 // Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
 const OPEN_MODE = P.get('open') === '1';
+
+// ── Debug ─────────────────────────────────────────────────────────────────────
+const DEBUG_MODE = P.get('debug') === '1';
+const dbgLog = [];
+const T0 = Date.now();
+function dbg(event, detail='') {
+  const sec = ((Date.now()-T0)/1000).toFixed(1);
+  dbgLog.unshift({sec, event, detail});
+  if (dbgLog.length > 60) dbgLog.pop();
+  if ($('dbg').classList.contains('on')) renderDbg();
+}
+function iceClass(state) {
+  if (state==='connected'||state==='completed') return 'ice-connected';
+  if (state==='checking'||state==='new') return 'ice-checking';
+  if (state==='failed'||state==='disconnected'||state==='closed') return 'ice-failed';
+  return 'ice-new';
+}
+function valClass(v) {
+  if (!v || v==='null' || v==='ended' || v==='failed' || v==='disconnected' || v==='closed' || v==='recvonly' || v==='inactive') return 'bad';
+  if (v==='checking'||v==='new'||v==='have-local-offer'||v==='have-remote-offer') return 'mid';
+  return 'ok';
+}
+function renderDbg() {
+  // Peers
+  const pc_el = $('dbg-peers');
+  const peerList = Object.entries(typeof peers!=='undefined'?peers:{});
+  pc_el.innerHTML = peerList.length ? '' : '<div style="color:#555;font-size:11px">Нет соединений</div>';
+  peerList.forEach(([uid, {pc}]) => {
+    const name = (typeof presence!=='undefined'&&presence[uid]) ? presence[uid].name : uid.slice(0,6);
+    const ice  = pc.iceConnectionState;
+    const conn = pc.connectionState;
+    const sig  = pc.signalingState;
+    const senders = pc.getSenders();
+    const recvs   = pc.getReceivers();
+    const sndTrack = senders[0]?.track;
+    const rcvTrack = recvs[0]?.track;
+    const sndInfo = sndTrack ? `${sndTrack.kind} ${sndTrack.readyState} en=${sndTrack.enabled}` : 'null';
+    const rcvInfo = rcvTrack ? `${rcvTrack.kind} ${rcvTrack.readyState}` : 'null';
+    const div = document.createElement('div');
+    div.className = 'dbg-peer '+iceClass(ice);
+    div.innerHTML = `<div class="dbg-pname">${name} <span style="color:#444;font-weight:normal">${uid.slice(0,6)}</span></div>
+      <div class="dbg-row"><span class="dbg-lbl">ICE:</span><span class="dbg-val ${valClass(ice)}">${ice}</span></div>
+      <div class="dbg-row"><span class="dbg-lbl">conn:</span><span class="dbg-val ${valClass(conn)}">${conn}</span></div>
+      <div class="dbg-row"><span class="dbg-lbl">signal:</span><span class="dbg-val ${valClass(sig)}">${sig}</span></div>
+      <div class="dbg-row"><span class="dbg-lbl">send:</span><span class="dbg-val ${valClass(sndInfo)}">${sndInfo}</span></div>
+      <div class="dbg-row"><span class="dbg-lbl">recv:</span><span class="dbg-val ${valClass(rcvInfo)}">${rcvInfo}</span></div>`;
+    pc_el.appendChild(div);
+  });
+  // Log
+  const log_el = $('dbg-log');
+  log_el.innerHTML = dbgLog.map(e=>`<div class="dbg-entry"><span class="t">${e.sec}s</span><span class="ev">${e.event}</span>${e.detail?' <span class="detail">'+e.detail+'</span>':''}</div>`).join('');
+}
+
+// Открыть дебаг: ?debug=1 или 5 быстрых тапов по заголовку
+if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg, 1000); }
+$('dbg-close').addEventListener('click', ()=>$('dbg').classList.remove('on'));
+let tapCount=0, tapTimer=0;
+document.querySelector('.hd-title').addEventListener('click', ()=>{
+  tapCount++; clearTimeout(tapTimer);
+  tapTimer = setTimeout(()=>tapCount=0, 800);
+  if (tapCount>=5) { tapCount=0; $('dbg').classList.toggle('on'); renderDbg(); setInterval(renderDbg,1000); }
+});
 
 function copyLink() {
   navigator.clipboard.writeText(location.href).then(()=>{
@@ -342,11 +440,12 @@ async function startApp(initialName) {
     peers[remoteUid] = {pc, iceTx:0};
 
     pc.ontrack = ({track, streams}) => {
+      dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       a.muted = muted;
-      a.play().catch(()=>{});
+      a.play().catch(e=>dbg('play-fail', String(e)));
     };
 
     pc.onicecandidate = ({candidate}) => {
@@ -355,13 +454,19 @@ async function startApp(initialName) {
       fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
     };
 
+    pc.oniceconnectionstatechange = () => {
+      dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
+    };
+
     // ICE-рестарт: создаём новый offer чтобы реально переподключиться
     pc.onconnectionstatechange = async () => {
+      dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
       if (pc.connectionState === 'failed' && pc.signalingState === 'stable') {
         try {
           const offer = await pc.createOffer({iceRestart:true});
           await pc.setLocalDescription(offer);
           fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
+          dbg('ICE-restart→sent', remoteUid.slice(0,6));
         } catch(e) {}
       }
     };
@@ -378,6 +483,7 @@ async function startApp(initialName) {
   const SIG_TS = Date.now(); // метка сессии для фильтрации старых сигналов
 
   async function sendOffer(remoteUid) {
+    dbg('sendOffer→', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
@@ -390,11 +496,12 @@ async function startApp(initialName) {
 
   async function handleOffer(remoteUid, data) {
     // Игнорируем сигналы старше 60 сек — защита если cleanup при старте не сработал
-    if (data.ts && Date.now() - data.ts > 60000) return;
+    if (data.ts && Date.now() - data.ts > 60000) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    dbg('handleOffer←', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     try {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
-      if(pc.signalingState!=='stable') return;
+      if(pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState, remoteUid.slice(0,6)); return; }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
       const ans = await pc.createAnswer();
       // Chrome без локального трека пишет a=recvonly — правим SDP напрямую
@@ -403,11 +510,13 @@ async function startApp(initialName) {
         .replace(/\r\na=inactive/g, '\r\na=sendrecv');
       await pc.setLocalDescription({type:'answer', sdp});
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:SIG_TS});
-    } catch(e) {}
+      dbg('answer→sent', remoteUid.slice(0,6));
+    } catch(e) { dbg('handleOffer-ERR', String(e)); }
   }
 
   async function handleAnswer(remoteUid, data) {
-    if (data.ts && Date.now() - data.ts > 60000) return;
+    if (data.ts && Date.now() - data.ts > 60000) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
+    dbg('handleAnswer←', remoteUid.slice(0,6));
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
@@ -563,7 +672,8 @@ async function startApp(initialName) {
         const sender = pc.getSenders().find(snd => !snd.track || snd.track.kind === 'audio');
         if (sender) {
           // replaceTrack не требует пересогласовки — канал уже есть в SDP.
-          sender.replaceTrack(audioTrack).catch(()=>{});
+          dbg('replaceTrack→', remoteUid.slice(0,6)+' track='+audioTrack.readyState+' en='+audioTrack.enabled);
+          sender.replaceTrack(audioTrack).catch(e=>dbg('replaceTrack-ERR',String(e)));
         } else {
           // Fallback: sender-а нет вообще → addTrack + явный новый offer
           pc.addTrack(audioTrack, s);
