@@ -12,8 +12,7 @@
 
     /* ── Главный экран ── */
     #app {
-      width: 100%; /* фикс: без явной ширины flex-контейнер съезжает на широких экранах */
-      height: 100vh; height: 100dvh;
+      position: fixed; inset: 0; /* гарантирует полный экран на любом устройстве */
       display: flex; flex-direction: column; align-items: center;
       justify-content: space-between;
       padding: 16px 18px 20px;
@@ -262,13 +261,20 @@ function getAudioCtx() {
   return audioCtx;
 }
 
+// Глобальный хук: startApp заполняет его после инициализации
+window._tryPlayAll = null;
+
 // ── Сплэш: тап разблокирует AudioContext до прихода любого звука ─────────────
 (function initSplash() {
   const splash = $('splash');
   function enterRoom(e) {
     const ctx = getAudioCtx();
-    ctx.resume().catch(()=>{});
     dbg('splash-enter', 'ctx='+ctx.state);
+    ctx.resume().then(() => {
+      dbg('ctx-resumed', ctx.state);
+      // Если аудиодорожки уже пришли пока показывался сплэш — запускаем их сейчас
+      if (window._tryPlayAll) window._tryPlayAll();
+    }).catch(()=>{});
     splash.classList.add('out');
     setTimeout(() => { splash.style.display = 'none'; }, 380);
     splash.removeEventListener('click',   enterRoom);
@@ -493,6 +499,8 @@ async function startApp(initialName) {
       if (a.srcObject && playViaCtx(uid, a.srcObject)) { a.muted = true; }
     });
   }
+  // Регистрируем глобально — сплэш вызовет его после resume()
+  window._tryPlayAll = tryPlayAll;
 
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
