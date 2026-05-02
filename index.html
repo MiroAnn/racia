@@ -279,6 +279,26 @@ $('sp-room').textContent = room;
 // Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
 const OPEN_MODE = P.get('open') === '1';
 
+// ── Debug — объявляем ДО сплэша, чтобы не было TDZ-ошибки ───────────────────
+const DEBUG_MODE = P.get('debug') === '1';
+// Загружаем предыдущий лог из sessionStorage (не теряется при обновлении страницы)
+let dbgLog = [];
+try {
+  const saved = sessionStorage.getItem('racia_dbglog');
+  if (saved) {
+    dbgLog = JSON.parse(saved);
+    dbgLog.unshift({sec:'---', event:'PAGE-RELOAD', detail: new Date().toLocaleTimeString()});
+  }
+} catch(_) {}
+const T0 = Date.now();
+function dbg(event, detail='') {
+  const sec = ((Date.now()-T0)/1000).toFixed(1);
+  dbgLog.unshift({sec, event, detail});
+  if (dbgLog.length > 120) dbgLog.length = 120;
+  try { sessionStorage.setItem('racia_dbglog', JSON.stringify(dbgLog.slice(0,120))); } catch(_) {}
+  if ($('dbg').classList.contains('on')) renderDbg();
+}
+
 // ── AudioContext на уровне модуля — разблокируется через тап на сплэше ───────
 let audioCtx = null;
 function getAudioCtx() {
@@ -292,49 +312,28 @@ window._tryPlayAll = null;
 // ── Сплэш: тап разблокирует AudioContext до прихода любого звука ─────────────
 (function initSplash() {
   const splash = $('splash');
-  function enterRoom(e) {
+  function enterRoom() {
     const ctx = getAudioCtx();
     dbg('splash-enter', 'ctx='+ctx.state);
     ctx.resume().then(() => {
       dbg('ctx-resumed', ctx.state);
-      // Если аудиодорожки уже пришли пока показывался сплэш — запускаем их сейчас
       if (window._tryPlayAll) window._tryPlayAll();
     }).catch(()=>{});
     splash.classList.add('out');
     setTimeout(() => { splash.style.display = 'none'; }, 380);
-    splash.removeEventListener('click',   enterRoom);
-    splash.removeEventListener('touchend', enterRoom);
+    splash.removeEventListener('click',    enterRoom);
+    splash.removeEventListener('touchend', onTouch);
   }
-  // В debug-режиме сплэш пропускается автоматически — не нужно тапать каждый раз
+  function onTouch(e) { e.preventDefault(); enterRoom(); }
+  // В debug-режиме сплэш пропускается автоматически
   if (DEBUG_MODE) {
     splash.style.display = 'none';
     dbg('splash-auto-skip', 'debug mode');
   } else {
     splash.addEventListener('click',    enterRoom);
-    splash.addEventListener('touchend', e => { e.preventDefault(); enterRoom(e); });
+    splash.addEventListener('touchend', onTouch);
   }
 })();
-
-// ── Debug ─────────────────────────────────────────────────────────────────────
-const DEBUG_MODE = P.get('debug') === '1';
-// Загружаем предыдущий лог из sessionStorage (не теряется при обновлении)
-let dbgLog = [];
-try {
-  const saved = sessionStorage.getItem('racia_dbglog');
-  if (saved) {
-    dbgLog = JSON.parse(saved);
-    // Отметим разрыв между сессиями
-    dbgLog.unshift({sec:'---', event:'PAGE-RELOAD', detail: new Date().toLocaleTimeString()});
-  }
-} catch(_) {}
-const T0 = Date.now();
-function dbg(event, detail='') {
-  const sec = ((Date.now()-T0)/1000).toFixed(1);
-  dbgLog.unshift({sec, event, detail});
-  if (dbgLog.length > 120) dbgLog.length = 120;
-  try { sessionStorage.setItem('racia_dbglog', JSON.stringify(dbgLog.slice(0,120))); } catch(_) {}
-  if ($('dbg').classList.contains('on')) renderDbg();
-}
 function iceClass(state) {
   if (state==='connected'||state==='completed') return 'ice-connected';
   if (state==='checking'||state==='new') return 'ice-checking';
