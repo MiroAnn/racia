@@ -9,18 +9,14 @@
     :root { --bg:#0d0d1a; --card:#161628; --green:#00d46a; --red:#ff3b30; --blue:#4a9eff; --text:#fff; --muted:#6b7280; }
     html { height: 100%; }
     body {
-      height: 100%; min-height: 100vh;
       background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
-      /* body сам является flex-контейнером — надёжно на любом браузере */
-      display: flex; flex-direction: column;
     }
 
     /* ── Главный экран ── */
     #app {
-      flex: 1;          /* занимает всё оставшееся место */
-      width: 100%;      /* на всю ширину body */
+      position: fixed; inset: 0;   /* надёжно заполняет всё окно на desktop и mobile */
       display: flex; flex-direction: column; align-items: center;
       justify-content: space-between;
       padding: 16px 18px 20px;
@@ -706,20 +702,17 @@ async function startApp(initialName) {
 
   async function handleOffer(remoteUid, data) {
     if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    // Строгое разделение ролей: кто с меньшим UID — всегда offerer, никогда не принимает чужие offer.
+    // Это предотвращает сброс DTLS-рукопожатия когда другая сторона присылает offer одновременно.
+    if (myUid < remoteUid) {
+      dbg('offer-ignored offerer-role', remoteUid.slice(0,6));
+      return;
+    }
     const existingP = peers[remoteUid];
     if (existingP) {
       const ice = existingP.pc.iceConnectionState;
-      // Не обрабатываем offer если ICE уже подключён (SSE-replay защита)
       if (ice === 'connected' || ice === 'completed') {
         dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return;
-      }
-      // Glare resolution: оба устройства прислали offer одновременно.
-      // Тот у кого меньший UID — естественный offerer, он игнорирует чужой offer.
-      // Тот у кого больший UID — принимает offer другого (становится answerer).
-      // Это гарантирует что ontrack сработает через handleAnswer, а не через проблемный rollback.
-      if (myUid < remoteUid && existingP.pc.signalingState === 'have-local-offer') {
-        dbg('offer-ignored glare', remoteUid.slice(0,6)+' natural-offerer-wins');
-        return;
       }
     }
     dbg('handleOffer←', remoteUid.slice(0,6));
