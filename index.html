@@ -715,6 +715,24 @@ async function startApp(initialName) {
       if(path==='/'){ if(data) Object.values(data).forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{})); return; }
       if(data) pc.addIceCandidate(new RTCIceCandidate(data)).catch(()=>{});
     });
+
+    // DataChannel keepalive: отправляем данные каждые 8с чтобы TURN биндинг не истекал (~13с timeout)
+    const setupKeepalive = (dc) => {
+      let kInterval = null;
+      dc.onopen = () => {
+        kInterval = setInterval(() => {
+          if (dc.readyState === 'open') try { dc.send('k'); } catch(_) {}
+        }, 8000);
+        dbg('ka-open', remoteUid.slice(0,6));
+      };
+      dc.onclose = () => { if (kInterval) { clearInterval(kInterval); kInterval = null; } dbg('ka-close', remoteUid.slice(0,6)); };
+    };
+    if (myUid < remoteUid) {
+      setupKeepalive(pc.createDataChannel('ka'));
+    } else {
+      pc.ondatachannel = ({channel}) => setupKeepalive(channel);
+    }
+
     return pc;
   }
 
