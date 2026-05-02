@@ -616,7 +616,16 @@ async function startApp(initialName) {
         dbg('play-ok', remoteUid.slice(0,6));
       }).catch(e => {
         dbg('play-fail', String(e));
-        showAudioUnlock();
+        // Если ctx ещё suspended — пользователь ещё не кликал ничего.
+        // В обычном режиме: не показываем кнопку поверх splash — клик на splash
+        // всплывёт до document и сам сработает retryPlay. Никаких лишних шагов.
+        // Unlock кнопку показываем только если:
+        //   a) ctx уже running (gesture был) но play всё равно упал — аномалия
+        //   b) DEBUG_MODE — splash нет, нужна визуальная подсказка
+        const ctxRunning = audioCtx && audioCtx.state === 'running';
+        if (ctxRunning || DEBUG_MODE) showAudioUnlock();
+        else dbg('play-wait-gesture', remoteUid.slice(0,6));
+
         const retryPlay = (ev) => {
           dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
           a.muted = true;
