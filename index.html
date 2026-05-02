@@ -615,16 +615,17 @@ async function startApp(initialName) {
       // Если ctx уже running — звук сразу, без какого-либо gesture.
       // Если suspended — звук пойдёт как только пользователь разблокирует ctx (тап на unlock или splash).
       if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
+      const audioCtxNow = getAudioCtx(); // lazy-create: audioCtx может быть null в debug mode
       try {
-        const src = audioCtx.createMediaStreamSource(stream);
-        const gain = audioCtx.createGain();
+        const src = audioCtxNow.createMediaStreamSource(stream);
+        const gain = audioCtxNow.createGain();
         gain.gain.value = muted ? 0 : VOLUME;
-        const comp = audioCtx.createDynamicsCompressor();
+        const comp = audioCtxNow.createDynamicsCompressor();
         comp.threshold.value = -24; comp.knee.value = 30;
         comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
-        src.connect(gain); gain.connect(comp); comp.connect(audioCtx.destination);
+        src.connect(gain); gain.connect(comp); comp.connect(audioCtxNow.destination);
         peerNodes[remoteUid] = gain;
-        dbg('ctx-pipe', remoteUid.slice(0,6)+' ctx='+audioCtx.state);
+        dbg('ctx-pipe', remoteUid.slice(0,6)+' ctx='+audioCtxNow.state);
       } catch(e) { dbg('ctx-pipe-err', String(e)); }
 
       // ── Путь 2: <audio> элемент для iOS speaker-routing (иначе идёт в earpiece) ──
@@ -638,7 +639,7 @@ async function startApp(initialName) {
       a.srcObject = stream;
       a.muted = true; // всегда muted — звук даёт WebAudio граф; элемент нужен только для iOS routing
 
-      if (audioCtx.state === 'running') {
+      if (audioCtxNow.state === 'running') {
         // AudioContext уже разблокирован — звук идёт через граф, никакой задержки
         a.play().catch(()=>{}); // best-effort для iOS routing (ошибка не страшна — WebAudio уже играет)
         hideAudioUnlock();
@@ -692,34 +693,15 @@ async function startApp(initialName) {
         }
       } else if (pc.connectionState === 'disconnected') {
         if (peers[remoteUid]) {
-          peers[remoteUid].disconnectTimer = setTimeout(async () => {
+          peers[remoteUid].disconnectTimer = setTimeout(() => {
             if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return;
             if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
-            if (myUid < remoteUid) {
-              // Оферрор: пробуем ICE restart на существующем PC — трек и audio-элемент сохраняются,
-              // play() не нужен, нет риска NotAllowedError.
-              // Полный reset только если ICE restart не прошёл.
-              if (pc.signalingState === 'stable') {
-                try {
-                  dbg('ICE-restart→', remoteUid.slice(0,6));
-                  const offer = await pc.createOffer({iceRestart:true});
-                  await pc.setLocalDescription(offer);
-                  fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
-                  if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
-                } catch(e) {
-                  dbg('ICE-restart-err→reset', String(e).slice(0,40));
-                  dropPeer(remoteUid);
-                  if (presence[remoteUid]) sendOffer(remoteUid);
-                }
-              } else {
-                dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
-                dropPeer(remoteUid);
-                if (presence[remoteUid]) sendOffer(remoteUid);
-              }
-            } else {
-              // Answerer: ждёт ICE restart offer от оферрора, ничего не инициирует
-              dbg('disconnect-wait-restart', remoteUid.slice(0,6));
-            }
+            dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
+            dropPeer(remoteUid);
+            // Только оферрор (myUid < remoteUid) переотправляет offer после сброса;
+            // answerer просто ждёт — иначе оба создают PC в have-local-offer → glare
+            if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
+            else if (presence[remoteUid]) dbg('disconnect-wait-offer', remoteUid.slice(0,6));
           }, 2000);
         }
       }
