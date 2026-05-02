@@ -509,7 +509,13 @@ async function startApp(initialName) {
       if (e) e.preventDefault();
       btn.remove(); unlockBtnShown = false;
       dbg('unlock-btn-tap', '');
-      tryPlayAll();
+      // Resumeим AudioContext — звук через WebAudio граф потечёт автоматически
+      // (createMediaStreamSource уже подключен в ontrack)
+      const ctx = getAudioCtx();
+      ctx.resume().then(() => {
+        dbg('unlock-ctx-resumed', ctx.state);
+        tryPlayAll(); // также поднимаем iOS audio элементы
+      }).catch(() => tryPlayAll());
     };
     btn.addEventListener('click',    doUnlock);
     btn.addEventListener('touchend', doUnlock, {passive:false});
@@ -580,13 +586,16 @@ async function startApp(initialName) {
   }
 
   function tryPlayAll() {
+    // WebAudio gain nodes — обновляем громкость (они уже подключены к destination)
+    Object.values(peerNodes).forEach(gain => {
+      if (gain) gain.gain.value = muted ? 0 : VOLUME;
+    });
+    hideAudioUnlock();
+    // iOS audio элементы — best-effort play для routing (muted=true, звук через WebAudio)
     document.querySelectorAll('audio').forEach(a => {
       if (a.srcObject) {
         a.muted = true;
-        a.play().then(() => {
-          a.muted = muted;
-          hideAudioUnlock();
-        }).catch(e => dbg('tryplay-fail', String(e)));
+        a.play().catch(e => dbg('tryplay-fail', String(e)));
       }
     });
   }
@@ -601,36 +610,50 @@ async function startApp(initialName) {
     pc.ontrack = ({track, streams}) => {
       dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
       const stream = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
+
+      // ── Путь 1: WebAudio (не требует play() — звук идёт автоматически когда ctx running) ──
+      // Если ctx уже running — звук сразу, без какого-либо gesture.
+      // Если suspended — звук пойдёт как только пользователь разблокирует ctx (тап на unlock или splash).
+      if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
+      try {
+        const src = audioCtx.createMediaStreamSource(stream);
+        const gain = audioCtx.createGain();
+        gain.gain.value = muted ? 0 : VOLUME;
+        const comp = audioCtx.createDynamicsCompressor();
+        comp.threshold.value = -24; comp.knee.value = 30;
+        comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
+        src.connect(gain); gain.connect(comp); comp.connect(audioCtx.destination);
+        peerNodes[remoteUid] = gain;
+        dbg('ctx-pipe', remoteUid.slice(0,6)+' ctx='+audioCtx.state);
+      } catch(e) { dbg('ctx-pipe-err', String(e)); }
+
+      // ── Путь 2: <audio> элемент для iOS speaker-routing (иначе идёт в earpiece) ──
       let a = document.getElementById('a-'+remoteUid);
       if (!a) {
         a = new Audio(); a.id = 'a-'+remoteUid; a.autoplay = true;
-        // iOS: playsinline → speaker (not earpiece); without it, routes to earpiece
         a.setAttribute('playsinline', 'true');
         a.setAttribute('webkit-playsinline', 'true');
         document.body.appendChild(a);
       }
       a.srcObject = stream;
-      a.muted = true;
-      a.play().then(() => {
-        a.muted = muted;
+      a.muted = true; // всегда muted — звук даёт WebAudio граф; элемент нужен только для iOS routing
+
+      if (audioCtx.state === 'running') {
+        // AudioContext уже разблокирован — звук идёт через граф, никакой задержки
+        a.play().catch(()=>{}); // best-effort для iOS routing (ошибка не страшна — WebAudio уже играет)
         hideAudioUnlock();
-        dbg('play-ok', remoteUid.slice(0,6));
-      }).catch(e => {
-        dbg('play-fail', String(e));
-        // Показываем красную кнопку 🔊 — один тап разблокирует звук
+        dbg('play-ctx-ok', remoteUid.slice(0,6));
+      } else {
+        // AudioContext suspended — ждём gesture; показываем unlock кнопку
+        a.play().then(() => {
+          // play() прошёл — на iOS аудио-сессия открыта, WebAudio заработает после resume
+          dbg('play-elem-ok', remoteUid.slice(0,6));
+        }).catch(e => {
+          dbg('play-fail', String(e));
+        });
         showAudioUnlock();
-        // Параллельно: retry на любое взаимодействие (нажатие TALK тоже сработает)
-        const retryPlay = (ev) => {
-          dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
-          a.muted = true;
-          a.play()
-            .then(() => { a.muted = muted; hideAudioUnlock(); dbg('play-retry-ok', remoteUid.slice(0,6)); })
-            .catch(e2 => dbg('play-retry-fail', String(e2)));
-        };
-        ['click','touchstart','keydown'].forEach(ev =>
-          document.addEventListener(ev, retryPlay, {once:true, passive:true})
-        );
-      });
+        dbg('waiting-gesture', remoteUid.slice(0,6));
+      }
     };
 
     pc.onicecandidate = ({candidate}) => {
@@ -971,8 +994,8 @@ async function startApp(initialName) {
 
   mbtn.addEventListener('click',()=>{
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
-    document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
-    Object.values(peerNodes).forEach(gain=>{ gain.gain.value = muted ? 0 : VOLUME; });
+    // Звук управляется через WebAudio gain — audio элементы всегда остаются muted
+    Object.values(peerNodes).forEach(gain=>{ if(gain) gain.gain.value = muted ? 0 : VOLUME; });
     toast(muted?'Звук выключен':'Звук включён');
   });
 }
