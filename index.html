@@ -493,10 +493,12 @@ async function startApp(initialName) {
   }
 
   function tryPlayAll() {
-    if (!audioCtx || audioCtx.state !== 'running') return;
+    // Просто воспроизводим все <audio> элементы — надёжно работает и на iOS Safari
     document.querySelectorAll('audio').forEach(a => {
-      const uid = a.id.replace('a-', '');
-      if (a.srcObject && playViaCtx(uid, a.srcObject)) { a.muted = true; }
+      if (a.srcObject) {
+        a.muted = muted;
+        a.play().catch(e => dbg('tryplay-fail', String(e)));
+      }
     });
   }
   // Регистрируем глобально — сплэш вызовет его после resume()
@@ -513,13 +515,10 @@ async function startApp(initialName) {
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = stream;
-      if (playViaCtx(remoteUid, stream)) {
-        a.muted = true;
-      } else {
-        // Страховка: AudioContext ещё не готов
-        a.muted = muted;
-        a.play().catch(e => dbg('play-fail', String(e)));
-      }
+      a.muted = muted;
+      // Используем <audio>.play() — надёжно на iOS Safari и Desktop
+      // (createMediaStreamSource → AudioContext на iOS даёт звук в трубку, а не в динамик)
+      a.play().catch(e => dbg('play-fail', String(e)));
     };
 
     pc.onicecandidate = ({candidate}) => {
