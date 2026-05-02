@@ -577,16 +577,43 @@ async function startApp(initialName) {
       dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
     };
 
-    // ICE-рестарт: создаём новый offer чтобы реально переподключиться
+    // Восстановление соединения при разрыве
     pc.onconnectionstatechange = async () => {
       dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
-      if (pc.connectionState === 'failed' && pc.signalingState === 'stable') {
-        try {
-          const offer = await pc.createOffer({iceRestart:true});
-          await pc.setLocalDescription(offer);
-          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
-          dbg('ICE-restart→sent', remoteUid.slice(0,6));
-        } catch(e) {}
+
+      // Сбрасываем таймер при любом изменении состояния
+      if (peers[remoteUid] && peers[remoteUid].disconnectTimer) {
+        clearTimeout(peers[remoteUid].disconnectTimer);
+        peers[remoteUid].disconnectTimer = null;
+      }
+
+      if (pc.connectionState === 'failed') {
+        if (pc.signalingState === 'stable') {
+          // ICE restart: быстрее чем полное пересоздание
+          try {
+            const offer = await pc.createOffer({iceRestart:true});
+            await pc.setLocalDescription(offer);
+            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
+            dbg('ICE-restart→sent', remoteUid.slice(0,6));
+            if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
+          } catch(e) {}
+        } else {
+          // Сигнализация не в стабильном состоянии — полное пересоздание
+          dbg('conn-fail-full-reset', remoteUid.slice(0,6));
+          dropPeer(remoteUid);
+          if (presence[remoteUid]) sendOffer(remoteUid);
+        }
+      } else if (pc.connectionState === 'disconnected') {
+        // Даём 8с на самовосстановление, потом принудительный рестарт
+        if (peers[remoteUid]) {
+          peers[remoteUid].disconnectTimer = setTimeout(async () => {
+            if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return; // уже заменён
+            if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
+            dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
+            dropPeer(remoteUid);
+            if (presence[remoteUid]) sendOffer(remoteUid);
+          }, 8000);
+        }
       }
     };
 
@@ -651,7 +678,11 @@ async function startApp(initialName) {
 
   // Закрыть и удалить PC для пира (чтобы пересоздать)
   function dropPeer(remoteUid) {
-    if (peers[remoteUid]) { try{peers[remoteUid].pc.close();}catch(_){} delete peers[remoteUid]; }
+    if (peers[remoteUid]) {
+      if (peers[remoteUid].disconnectTimer) clearTimeout(peers[remoteUid].disconnectTimer);
+      try{peers[remoteUid].pc.close();}catch(_){}
+      delete peers[remoteUid];
+    }
     const a = document.getElementById('a-'+remoteUid); if(a) a.remove();
     if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
   }
@@ -749,7 +780,24 @@ async function startApp(initialName) {
         if (!presence[uid]) {
           // Новый пир (или после перезагрузки) → устанавливаем соединение
           presence[uid]={name:d.name,speaking:false};
-          if(myUid<uid) sendOffer(uid);
+          if(myUid<uid) {
+            sendOffer(uid);
+          } else {
+            // Мы answerer — ждём offer 5с, если нет — сами инициируем
+            // Это фиксит race condition: offer потерялся при старте, мы не ждём 53с
+            const capName = d.name;
+            setTimeout(() => {
+              if (!presence[uid]) return; // пир ушёл
+              const p = peers[uid];
+              const ice = p && p.pc.iceConnectionState;
+              if (!p || (ice !== 'connected' && ice !== 'completed' && ice !== 'checking')) {
+                dbg('offer-fallback', uid.slice(0,6)+' no offer in 5s, initiating');
+                if (p) dropPeer(uid);
+                if (!presence[uid]) presence[uid] = {name:capName, speaking:false};
+                sendOffer(uid);
+              }
+            }, 5000);
+          }
         } else {
           // Обновить имя если изменилось
           presence[uid].name = d.name;
@@ -764,8 +812,8 @@ async function startApp(initialName) {
             } else {
               const pc = peers[uid].pc;
               const age = Date.now() - (peers[uid].offerSentAt || 0);
-              if (pc.signalingState === 'have-local-offer' && age > 12000) {
-                // Offer завис: answerer не ответил за 12с → пересоздаём соединение
+              if (pc.signalingState === 'have-local-offer' && age > 8000) {
+                // Offer завис: answerer не ответил за 8с → пересоздаём соединение
                 dbg('offer-timeout→retry', uid.slice(0,6)+' age='+(age/1000|0)+'s');
                 dropPeer(uid);
                 delete presence[uid];
