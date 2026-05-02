@@ -235,19 +235,29 @@ function fbPut(room,path,val) { return fetch(fbUrl(room,path),{method:'PUT',head
 function fbDel(room,path)    { return fetch(fbUrl(room,path),{method:'DELETE'}); }
 function fbListen(room,path,cb) {
   const isSignals = path.startsWith('signals/');
-  const es = new EventSource(fbUrl(room,path)+'?stream=true');
-  es.addEventListener('put', e => {
-    const d=JSON.parse(e.data);
-    if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
-    if(isSignals && d.data) {
-      const inner = d.path==='/' ? Object.values(d.data)[0] : d.data;
-      dbg('SSE-signal put', 'path='+d.path+' type='+(inner&&inner.type||'?'));
-    }
-    cb(d.path,d.data);
-  });
-  es.addEventListener('error', ()=> { dbg('SSE-error', path.slice(0,20)); });
-  es.addEventListener('open',  ()=> { dbg('SSE-open',  path.slice(0,20)); });
-  return es;
+  let es, reconnTimer;
+  function connect() {
+    if (es) { try{es.close();}catch(_){} }
+    clearTimeout(reconnTimer);
+    es = new EventSource(fbUrl(room,path)+'?stream=true');
+    es.addEventListener('put', e => {
+      const d=JSON.parse(e.data);
+      if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
+      if(isSignals && d.data) {
+        const inner = d.path==='/' ? Object.values(d.data)[0] : d.data;
+        dbg('SSE-signal put', 'path='+d.path+' type='+(inner&&inner.type||'?'));
+      }
+      cb(d.path,d.data);
+    });
+    es.addEventListener('error', ()=> {
+      dbg('SSE-error', path.slice(0,20));
+      // Переподключаемся через 2с — не ждём медленный браузерный backoff
+      reconnTimer = setTimeout(connect, 2000);
+    });
+    es.addEventListener('open',  ()=> { dbg('SSE-open',  path.slice(0,20)); });
+  }
+  connect();
+  return { close: ()=>{ clearTimeout(reconnTimer); if(es) es.close(); } };
 }
 
 // ── Комната и режим ──────────────────────────────────────────────────────────
@@ -523,7 +533,13 @@ async function startApp(initialName) {
       dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
       const stream = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       let a = document.getElementById('a-'+remoteUid);
-      if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
+      if (!a) {
+        a = new Audio(); a.id = 'a-'+remoteUid; a.autoplay = true;
+        // iOS: playsinline → speaker (not earpiece); without it, routes to earpiece
+        a.setAttribute('playsinline', 'true');
+        a.setAttribute('webkit-playsinline', 'true');
+        document.body.appendChild(a);
+      }
       a.srcObject = stream;
       // iOS Safari: play() на muted-элементе всегда разрешён даже в async-коллбэке.
       // Запускаем muted=true, после старта — снимаем mute.
@@ -602,7 +618,15 @@ async function startApp(initialName) {
   }
 
   async function handleOffer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    // Skip if ICE already connected — prevents SSE fast-reconnect from replaying offer and breaking working connection
+    const existingP = peers[remoteUid];
+    if (existingP) {
+      const ice = existingP.pc.iceConnectionState;
+      if (ice === 'connected' || ice === 'completed') {
+        dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return;
+      }
+    }
     dbg('handleOffer←', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     try {
@@ -625,7 +649,7 @@ async function startApp(initialName) {
   }
 
   async function handleAnswer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START)) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
     dbg('handleAnswer←', remoteUid.slice(0,6));
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
