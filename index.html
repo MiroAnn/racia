@@ -86,6 +86,11 @@
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
+    /* Кнопка разблокировки autoplay */
+    #unlock-audio { display:none; position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:var(--blue); color:#fff; border:none; border-radius:22px; padding:12px 24px; font-size:.95rem; font-weight:700; cursor:pointer; box-shadow:0 4px 20px rgba(74,158,255,.5); z-index:100; white-space:nowrap; animation: pulse-btn 1.5s infinite; }
+    #unlock-audio.on { display:block; }
+    @keyframes pulse-btn { 0%,100%{box-shadow:0 4px 20px rgba(74,158,255,.5)} 50%{box-shadow:0 4px 32px rgba(74,158,255,.9)} }
+
     /* ── Debug panel ── */
     #dbg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:999; flex-direction:column; font-family:monospace; font-size:11px; color:#ccc; }
     #dbg.on { display:flex; }
@@ -142,6 +147,7 @@
 </div>
 
 <div id="toast"></div>
+<button id="unlock-audio">🔊 Нажми чтобы услышать</button>
 
 <div id="dbg">
   <div id="dbg-head">
@@ -160,13 +166,17 @@ const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
 const ICE_CFG = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  // freestun.net — бесплатный TURN, хорошо работает с мобильными сетями
+  { urls: ['turn:freestun.net:3478','turn:freestun.net:3479'],
+    username:'free', credential:'free' },
+  { urls: 'turns:freestun.net:5350',
+    username:'free', credential:'free' },
+  // openrelay как запасной вариант
   { urls: [
     'turn:openrelay.metered.ca:80',
     'turn:openrelay.metered.ca:80?transport=tcp',
-    'turn:openrelay.metered.ca:443',
     'turn:openrelay.metered.ca:443?transport=tcp',
-    'turns:openrelay.metered.ca:443'
   ], username:'openrelayproject', credential:'openrelayproject' }
 ]};
 
@@ -184,7 +194,13 @@ function fbPut(room,path,val) { return fetch(fbUrl(room,path),{method:'PUT',head
 function fbDel(room,path)    { return fetch(fbUrl(room,path),{method:'DELETE'}); }
 function fbListen(room,path,cb) {
   const es = new EventSource(fbUrl(room,path)+'?stream=true');
-  es.addEventListener('put', e => { const d=JSON.parse(e.data); cb(d.path,d.data); });
+  es.addEventListener('put', e => {
+    const d=JSON.parse(e.data);
+    if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
+    cb(d.path,d.data);
+  });
+  es.addEventListener('error', ()=> { if(path==='users') dbg('SSE-users ERROR'); });
+  es.addEventListener('open',  ()=> { if(path==='users') dbg('SSE-users OPEN'); });
   return es;
 }
 
@@ -428,9 +444,20 @@ async function startApp(initialName) {
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
   // Разблокировать autoplay при любом касании — Chrome и Safari блокируют без жеста
+  const unlockBtn = $('unlock-audio');
+  let audioBlocked = false;
+
   function tryPlayAll() {
-    document.querySelectorAll('audio').forEach(a => { if(a.paused) a.play().catch(()=>{}); });
+    document.querySelectorAll('audio').forEach(a => {
+      if(a.paused) a.play().then(()=>{ audioBlocked=false; unlockBtn.classList.remove('on'); }).catch(()=>{});
+    });
   }
+  function showUnlockBtn() {
+    if (!audioBlocked) { audioBlocked=true; unlockBtn.classList.add('on'); }
+  }
+  unlockBtn.addEventListener('click', ()=>{ tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; });
+  unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; });
+
   document.addEventListener('touchstart', tryPlayAll, {passive:true});
   document.addEventListener('mousedown',  tryPlayAll);
 
@@ -445,7 +472,7 @@ async function startApp(initialName) {
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       a.muted = muted;
-      a.play().catch(e=>dbg('play-fail', String(e)));
+      a.play().catch(e=>{ dbg('play-fail', String(e)); showUnlockBtn(); });
     };
 
     pc.onicecandidate = ({candidate}) => {
@@ -480,8 +507,6 @@ async function startApp(initialName) {
 
   const SESSION_START = Date.now(); // ID текущей сессии
 
-  const SIG_TS = Date.now(); // метка сессии для фильтрации старых сигналов
-
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
@@ -491,7 +516,9 @@ async function startApp(initialName) {
       .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
       .replace(/\r\na=inactive/g, '\r\na=sendrecv');
     await pc.setLocalDescription({type:'offer', sdp});
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp,ts:SIG_TS});
+    // ts: Date.now() — время отправки, не запуска сессии!
+    // Иначе если десктоп открыт >60с до прихода телефона — оффер отклоняется как стейл
+    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp,ts:Date.now()});
   }
 
   async function handleOffer(remoteUid, data) {
@@ -509,7 +536,7 @@ async function startApp(initialName) {
         .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
         .replace(/\r\na=inactive/g, '\r\na=sendrecv');
       await pc.setLocalDescription({type:'answer', sdp});
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:SIG_TS});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:Date.now()});
       dbg('answer→sent', remoteUid.slice(0,6));
     } catch(e) { dbg('handleOffer-ERR', String(e)); }
   }
@@ -541,8 +568,7 @@ async function startApp(initialName) {
 
   // ── Presence ─────────────────────────────────────────────────────────────
   presence[myUid] = {name:currentMyName, speaking:false};
-  // sid = session ID: меняется при каждой перезагрузке страницы.
-  // Другие участники детектируют смену sid → пересоздают соединение.
+  dbg('registered', 'uid='+myUid.slice(0,6)+' room='+room);
   fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
 
   // Удаляем себя при закрытии: и beforeunload, и pagehide (pagehide надёжнее на мобиле)
