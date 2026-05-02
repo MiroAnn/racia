@@ -574,7 +574,7 @@ async function startApp(initialName) {
             dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
             dropPeer(remoteUid);
             if (presence[remoteUid]) sendOffer(remoteUid);
-          }, 8000);
+          }, 4000);
         }
       }
     };
@@ -602,7 +602,7 @@ async function startApp(initialName) {
   }
 
   async function handleOffer(remoteUid, data) {
-    if (data.ts && Date.now() - data.ts > 60000) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
     dbg('handleOffer←', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     try {
@@ -625,7 +625,7 @@ async function startApp(initialName) {
   }
 
   async function handleAnswer(remoteUid, data) {
-    if (data.ts && Date.now() - data.ts > 60000) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START)) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
     dbg('handleAnswer←', remoteUid.slice(0,6));
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
