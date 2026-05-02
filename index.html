@@ -7,16 +7,25 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root { --bg:#0d0d1a; --card:#161628; --green:#00d46a; --red:#ff3b30; --blue:#4a9eff; --text:#fff; --muted:#6b7280; }
-    html, body { height: 100%; background: var(--bg); color: var(--text); }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+    html { height: 100%; }
+    body {
+      height: 100%; min-height: 100vh;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+      /* body сам является flex-контейнером — надёжно на любом браузере */
+      display: flex; flex-direction: column;
+    }
 
     /* ── Главный экран ── */
     #app {
-      position: fixed; inset: 0; /* гарантирует полный экран на любом устройстве */
+      flex: 1;          /* занимает всё оставшееся место */
+      width: 100%;      /* на всю ширину body */
       display: flex; flex-direction: column; align-items: center;
       justify-content: space-between;
       padding: 16px 18px 20px;
       padding-bottom: max(20px, env(safe-area-inset-bottom));
+      overflow: hidden;
     }
 
     /* Шапка */
@@ -493,11 +502,12 @@ async function startApp(initialName) {
   }
 
   function tryPlayAll() {
-    // Просто воспроизводим все <audio> элементы — надёжно работает и на iOS Safari
     document.querySelectorAll('audio').forEach(a => {
       if (a.srcObject) {
-        a.muted = muted;
-        a.play().catch(e => dbg('tryplay-fail', String(e)));
+        // muted=true → play всегда разрешён на iOS; потом снимаем mute
+        a.muted = true;
+        a.play().then(() => { a.muted = muted; })
+                .catch(e => dbg('tryplay-fail', String(e)));
       }
     });
   }
@@ -515,10 +525,13 @@ async function startApp(initialName) {
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = stream;
-      a.muted = muted;
-      // Используем <audio>.play() — надёжно на iOS Safari и Desktop
-      // (createMediaStreamSource → AudioContext на iOS даёт звук в трубку, а не в динамик)
-      a.play().catch(e => dbg('play-fail', String(e)));
+      // iOS Safari: play() на muted-элементе всегда разрешён даже в async-коллбэке.
+      // Запускаем muted=true, после старта — снимаем mute.
+      a.muted = true;
+      a.play().then(() => {
+        a.muted = muted; // Восстанавливаем пользовательский mute-статус
+        dbg('play-ok', remoteUid.slice(0,6));
+      }).catch(e => dbg('play-fail', String(e)));
     };
 
     pc.onicecandidate = ({candidate}) => {
