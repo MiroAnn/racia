@@ -167,12 +167,14 @@ const ICE_CFG = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  // freestun.net — бесплатный TURN, хорошо работает с мобильными сетями
-  { urls: ['turn:freestun.net:3478','turn:freestun.net:3479'],
+  // freestun.net — бесплатный публичный TURN
+  { urls: ['turn:freestun.net:3478', 'turn:freestun.net:3479'],
     username:'free', credential:'free' },
-  { urls: 'turns:freestun.net:5350',
-    username:'free', credential:'free' },
-  // openrelay как запасной вариант
+  { urls: 'turns:freestun.net:5350', username:'free', credential:'free' },
+  // relay.backups.cz — европейский TURN, стабильный
+  { urls: ['turn:relay.backups.cz:3478', 'turn:relay.backups.cz:443?transport=tcp'],
+    username:'user', credential:'user' },
+  // openrelay — запасной
   { urls: [
     'turn:openrelay.metered.ca:80',
     'turn:openrelay.metered.ca:80?transport=tcp',
@@ -527,6 +529,8 @@ async function startApp(initialName) {
 
     pc.onicecandidate = ({candidate}) => {
       if(!candidate) return;
+      // Логируем relay-кандидаты — если их нет, TURN не работает
+      if(candidate.type==='relay') dbg('ICE-relay✓', candidate.relatedAddress+' via '+candidate.address);
       const idx = peers[remoteUid].iceTx++;
       fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
     };
