@@ -124,7 +124,8 @@
     #dbg.on { display:flex; }
     #dbg-head { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #222; flex-shrink:0; }
     #dbg-head span { color:#fff; font-size:13px; font-weight:700; }
-    #dbg-close { background:none; border:1px solid #444; color:#aaa; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:11px; }
+    #dbg-close, #dbg-copy { background:none; border:1px solid #444; color:#aaa; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:11px; }
+    #dbg-copy:active { background:#1a3a1a; color:#0f0; }
     #dbg-body { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:10px; }
     .dbg-peer { background:#111; border-radius:8px; padding:8px 10px; border-left:3px solid #333; }
     .dbg-peer.ice-connected { border-left-color:#00d46a; }
@@ -191,7 +192,10 @@
 <div id="dbg">
   <div id="dbg-head">
     <span>🔧 Debug</span>
-    <button id="dbg-close">Закрыть</button>
+    <div style="display:flex;gap:6px">
+      <button id="dbg-copy">Копировать</button>
+      <button id="dbg-close">Закрыть</button>
+    </div>
   </div>
   <div id="dbg-body">
     <div id="dbg-peers"></div>
@@ -355,6 +359,17 @@ function renderDbg() {
 
 if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg, 1000); }
 $('dbg-close').addEventListener('click', ()=>$('dbg').classList.remove('on'));
+$('dbg-copy').addEventListener('click', ()=>{
+  const peerLines = Object.entries(typeof peers!=='undefined'?peers:{}).map(([uid,{pc}])=>{
+    const s=pc.getSenders(); const r=pc.getReceivers();
+    return `  PEER ${uid.slice(0,6)}: ice=${pc.iceConnectionState} conn=${pc.connectionState} sig=${pc.signalingState}`
+      +`\n    send=${s.map(snd=>snd.track?snd.track.kind+'/'+snd.track.readyState+'/en='+snd.track.enabled:'null').join(',')}`
+      +`\n    recv=${r.map(rcv=>rcv.track?rcv.track.kind+'/'+rcv.track.readyState:'null').join(',')}`;
+  }).join('\n');
+  const logLines = dbgLog.map(e=>`${e.sec}s ${e.event} ${e.detail}`).join('\n');
+  const txt = '=== PEERS ===\n'+(peerLines||'none')+'\n\n=== LOG ===\n'+logLines;
+  navigator.clipboard.writeText(txt).then(()=>{ $('dbg-copy').textContent='✓ Скопировано!'; setTimeout(()=>{ $('dbg-copy').textContent='Копировать'; },2000); }).catch(()=>alert(txt));
+});
 let tapCount=0, tapTimer=0;
 document.querySelector('.hd-title').addEventListener('click', ()=>{
   tapCount++; clearTimeout(tapTimer);
@@ -814,19 +829,29 @@ async function startApp(initialName) {
       const s = await acquireStream();
       s.getAudioTracks().forEach(t => t.enabled = true);
       const audioTrack = s.getAudioTracks()[0];
+      const peerCount = Object.keys(peers).length;
+      dbg('startTalk', 'peers='+peerCount+' track='+audioTrack.readyState+' en='+audioTrack.enabled);
       for (const [remoteUid, {pc}] of Object.entries(peers)) {
-        const sender = pc.getSenders().find(snd => !snd.track || snd.track.kind === 'audio');
+        const senders = pc.getSenders();
+        const ice = pc.iceConnectionState;
+        dbg('talk-peer', remoteUid.slice(0,6)+' ice='+ice+' senders='+senders.length+' sig='+pc.signalingState);
+        senders.forEach((snd,i)=>dbg('  sender'+i, (snd.track?snd.track.kind+'/'+snd.track.readyState+'/en='+snd.track.enabled:'null')));
+        const sender = senders.find(snd => !snd.track || snd.track.kind === 'audio');
         if (sender) {
-          dbg('replaceTrack→', remoteUid.slice(0,6)+' track='+audioTrack.readyState+' en='+audioTrack.enabled);
-          sender.replaceTrack(audioTrack).catch(e=>dbg('replaceTrack-ERR',String(e)));
+          dbg('replaceTrack→', remoteUid.slice(0,6)+' hadTrack='+(sender.track?sender.track.readyState:'null'));
+          sender.replaceTrack(audioTrack)
+            .then(()=>dbg('replaceTrack-ok', remoteUid.slice(0,6)))
+            .catch(e=>dbg('replaceTrack-ERR',String(e)));
         } else {
+          dbg('addTrack→', remoteUid.slice(0,6)+' (no sender found)');
           pc.addTrack(audioTrack, s);
           if (pc.signalingState === 'stable') {
             try {
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
-              fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
-            } catch(e) {}
+              fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
+              dbg('addTrack-offer→sent', remoteUid.slice(0,6));
+            } catch(e) { dbg('addTrack-offer-ERR',String(e)); }
           }
         }
       }
