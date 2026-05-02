@@ -687,7 +687,11 @@ async function startApp(initialName) {
         if(d && !d.name) { fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid); }
         delete presence[uid]; delete peerSids[uid]; dropPeer(uid);
       } else {
-        const sidChanged = d.sid && peerSids[uid] && peerSids[uid] !== d.sid;
+        // sidChanged = только если новый sid БОЛЬШЕ (пир реально перезагрузился).
+        // Если новый sid МЕНЬШЕ — протухшая запись из старой сессии, игнорируем.
+        const isStale    = d.sid && peerSids[uid] && d.sid < peerSids[uid];
+        if (isStale) { dbg('SSE-stale-ignored', uid.slice(0,6)); return; }
+        const sidChanged = d.sid && peerSids[uid] && d.sid > peerSids[uid];
         if (sidChanged) { dropPeer(uid); delete presence[uid]; }
         if (d.sid) peerSids[uid] = d.sid;
         lastSeen[uid] = Date.now();
