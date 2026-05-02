@@ -462,16 +462,22 @@ async function startApp(initialName) {
     return audioCtx;
   }
 
+  const VOLUME = 3; // усилитель громкости (1 = нормально, 3 = громче)
+
   function playViaCtx(remoteUid, stream) {
     if (!audioCtx || audioCtx.state !== 'running') return false;
     // Отключаем старый узел
     if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} }
     const src = audioCtx.createMediaStreamSource(stream);
     const gain = audioCtx.createGain();
-    gain.gain.value = muted ? 0 : 1;
-    src.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.value = muted ? 0 : VOLUME;
+    // Компрессор — предотвращает искажения при высоком усилении
+    const comp = audioCtx.createDynamicsCompressor();
+    comp.threshold.value = -24; comp.knee.value = 30;
+    comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
+    src.connect(gain); gain.connect(comp); comp.connect(audioCtx.destination);
     peerNodes[remoteUid] = gain;
-    dbg('ctx-play', remoteUid.slice(0,6));
+    dbg('ctx-play', remoteUid.slice(0,6)+' vol='+VOLUME);
     return true;
   }
 
