@@ -484,6 +484,45 @@ async function startApp(initialName) {
     setTimeout(() => { input.focus(); input.select(); }, 50);
   }
 
+  // ── Кнопка разблокировки звука (появляется если play() заблокирован браузером) ──
+  let unlockBtnShown = false;
+  function showAudioUnlock() {
+    if (unlockBtnShown || document.getElementById('audio-unlock')) return;
+    unlockBtnShown = true;
+    const btn = document.createElement('div');
+    btn.id = 'audio-unlock';
+    btn.innerHTML = '🔊';
+    btn.title = 'Нажми чтобы включить звук';
+    btn.style.cssText = [
+      'position:fixed','bottom:108px','left:50%','transform:translateX(-50%)',
+      'z-index:4000','background:#ff3b30','color:#fff','font-size:1.6rem',
+      'width:60px','height:60px','border-radius:50%',
+      'display:flex','align-items:center','justify-content:center',
+      'cursor:pointer','box-shadow:0 4px 18px rgba(255,59,48,.55)',
+      'animation:unlockPulse 1.1s ease-in-out infinite',
+    ].join(';');
+    if (!document.getElementById('unlock-pulse-style')) {
+      const s = document.createElement('style');
+      s.id = 'unlock-pulse-style';
+      s.textContent = '@keyframes unlockPulse{0%,100%{transform:translateX(-50%) scale(1);opacity:1}50%{transform:translateX(-50%) scale(1.12);opacity:.85}}';
+      document.head.appendChild(s);
+    }
+    document.body.appendChild(btn);
+    dbg('show-unlock-btn', '');
+    const doUnlock = (e) => {
+      if (e) e.preventDefault();
+      btn.remove(); unlockBtnShown = false;
+      dbg('unlock-btn-tap', '');
+      tryPlayAll();
+    };
+    btn.addEventListener('click',    doUnlock);
+    btn.addEventListener('touchend', doUnlock, {passive:false});
+  }
+  function hideAudioUnlock() {
+    const btn = document.getElementById('audio-unlock');
+    if (btn) { btn.remove(); unlockBtnShown = false; }
+  }
+
   // ── Микрофон ─────────────────────────────────────────────────────────────
   async function acquireStream() {
     if (localStream) return localStream;
@@ -547,10 +586,11 @@ async function startApp(initialName) {
   function tryPlayAll() {
     document.querySelectorAll('audio').forEach(a => {
       if (a.srcObject) {
-        // muted=true → play всегда разрешён на iOS; потом снимаем mute
         a.muted = true;
-        a.play().then(() => { a.muted = muted; })
-                .catch(e => dbg('tryplay-fail', String(e)));
+        a.play().then(() => {
+          a.muted = muted;
+          hideAudioUnlock(); // звук пошёл — кнопка больше не нужна
+        }).catch(e => dbg('tryplay-fail', String(e)));
       }
     });
   }
@@ -577,16 +617,18 @@ async function startApp(initialName) {
       a.muted = true;
       a.play().then(() => {
         a.muted = muted;
+        hideAudioUnlock();
         dbg('play-ok', remoteUid.slice(0,6));
       }).catch(e => {
         dbg('play-fail', String(e));
-        // play() заблокирован браузером (нет жеста) — ретраим при следующем взаимодействии.
-        // Это гарантирует что звук появится как только пользователь коснётся экрана/нажмёт что-то.
+        // Показываем красную кнопку 🔊 — один тап разблокирует звук
+        showAudioUnlock();
+        // Параллельно: retry на любое взаимодействие (нажатие TALK тоже сработает)
         const retryPlay = (ev) => {
           dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
           a.muted = true;
           a.play()
-            .then(() => { a.muted = muted; dbg('play-retry-ok', remoteUid.slice(0,6)); })
+            .then(() => { a.muted = muted; hideAudioUnlock(); dbg('play-retry-ok', remoteUid.slice(0,6)); })
             .catch(e2 => dbg('play-retry-fail', String(e2)));
         };
         ['click','touchstart','keydown'].forEach(ev =>
@@ -635,7 +677,7 @@ async function startApp(initialName) {
             dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
             dropPeer(remoteUid);
             if (presence[remoteUid]) sendOffer(remoteUid);
-          }, 4000);
+          }, 2000);
         }
       }
     };
