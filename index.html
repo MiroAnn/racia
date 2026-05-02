@@ -11,9 +11,9 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 
     /* ── Главный экран ── */
-    /* 100dvh учитывает адресную строку Safari на iOS */
     #app {
-      height: 100vh; height: 100dvh; /* dvh учитывает адресную строку Safari */
+      width: 100%; /* фикс: без явной ширины flex-контейнер съезжает на широких экранах */
+      height: 100vh; height: 100dvh;
       display: flex; flex-direction: column; align-items: center;
       justify-content: space-between;
       padding: 16px 18px 20px;
@@ -79,7 +79,7 @@
 
     .thint { color: var(--muted); font-size: .73rem; text-align: center; }
 
-    /* Mute — справа в шапке */
+    /* Mute */
     #mbtn { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
     #mbtn.muted { border-color: var(--red); background: rgba(255,59,48,.12); }
 
@@ -106,8 +106,7 @@
       box-shadow:0 0 0 10px rgba(74,158,255,.08),0 8px 32px rgba(74,158,255,.4),inset 0 2px 0 rgba(255,255,255,.2);
       color:#fff; font-size:.95rem; font-weight:800; letter-spacing:.14em;
       display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px;
-      pointer-events:none;
-      transition:transform .08s, box-shadow .08s;
+      pointer-events:none; transition:transform .08s, box-shadow .08s;
     }
     #splash:active .sp-btn { transform:scale(.93); box-shadow:0 0 0 10px rgba(74,158,255,.12),0 4px 20px rgba(74,158,255,.3),inset 0 2px 0 rgba(255,255,255,.15); }
     .sp-hint { color:var(--muted); font-size:.72rem; margin-top:10px; }
@@ -169,7 +168,6 @@
 
 <div id="toast"></div>
 
-<!-- Сплэш — перекрывает всё, тап разблокирует AudioContext до прихода звука -->
 <div id="splash">
   <div class="sp-logo">🏔️</div>
   <div class="sp-title">Поболтушки</div>
@@ -196,8 +194,6 @@
 <script>
 // ── Конфиг ───────────────────────────────────────────────────────────────────
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
-// ICE серверы загружаются из Metered API (свежие credentials каждый раз)
-// Запасной вариант — статические credentials
 const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'turn:a.relay.metered.ca:80',
@@ -236,7 +232,6 @@ function fbListen(room,path,cb) {
     const d=JSON.parse(e.data);
     if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
     if(isSignals && d.data) {
-      // Логируем тип сигнала чтобы знать, доходят ли offer/answer
       const inner = d.path==='/' ? Object.values(d.data)[0] : d.data;
       dbg('SSE-signal put', 'path='+d.path+' type='+(inner&&inner.type||'?'));
     }
@@ -255,7 +250,7 @@ if (!room) {
   const u = new URL(location.href); u.searchParams.set('room',room); history.replaceState({},'',u);
 }
 $('m-room').textContent = room;
-$('sp-room').textContent = room; // показываем комнату на сплэше
+$('sp-room').textContent = room;
 
 // Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
 const OPEN_MODE = P.get('open') === '1';
@@ -271,7 +266,6 @@ function getAudioCtx() {
 (function initSplash() {
   const splash = $('splash');
   function enterRoom(e) {
-    // Разблокируем AudioContext СИНХРОННО внутри жеста — iOS Safari требует этого
     const ctx = getAudioCtx();
     ctx.resume().catch(()=>{});
     dbg('splash-enter', 'ctx='+ctx.state);
@@ -306,7 +300,6 @@ function valClass(v) {
   return 'ok';
 }
 function renderDbg() {
-  // Peers
   const pc_el = $('dbg-peers');
   const peerList = Object.entries(typeof peers!=='undefined'?peers:{});
   pc_el.innerHTML = peerList.length ? '' : '<div style="color:#555;font-size:11px">Нет соединений</div>';
@@ -331,12 +324,10 @@ function renderDbg() {
       <div class="dbg-row"><span class="dbg-lbl">recv:</span><span class="dbg-val ${valClass(rcvInfo)}">${rcvInfo}</span></div>`;
     pc_el.appendChild(div);
   });
-  // Log
   const log_el = $('dbg-log');
   log_el.innerHTML = dbgLog.map(e=>`<div class="dbg-entry"><span class="t">${e.sec}s</span><span class="ev">${e.event}</span>${e.detail?' <span class="detail">'+e.detail+'</span>':''}</div>`).join('');
 }
 
-// Открыть дебаг: ?debug=1 или 5 быстрых тапов по заголовку
 if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg, 1000); }
 $('dbg-close').addEventListener('click', ()=>$('dbg').classList.remove('on'));
 let tapCount=0, tapTimer=0;
@@ -378,34 +369,25 @@ async function startApp(initialName) {
 
   // ── Рендер списка участников ─────────────────────────────────────────────
   function renderList() {
-    if (isEditing) return; // не перерисовывать во время редактирования
+    if (isEditing) return;
     const c=$('m-plist'); c.innerHTML='';
-    // Сначала себя, потом остальных
     const sorted = [[myUid, presence[myUid]], ...Object.entries(presence).filter(([uid])=>uid!==myUid)];
     sorted.forEach(([uid, p]) => {
-      if (!p || !p.name) return; // пропускаем записи без имени (призраки)
+      if (!p || !p.name) return;
       const { name, speaking } = p;
       const isMe = uid === myUid;
       const div = document.createElement('div');
       div.className = 'pi' + (speaking?' speaking':'') + (isMe?' me-row':'');
-
       const dot = document.createElement('div');
       dot.className = 'pd '+(isMe?'me':speaking?'speaking':'online');
-
       const nm = document.createElement('div'); nm.className='pname'; nm.textContent=name;
-
       const tag = document.createElement('div');
-      if (isMe) {
-        tag.className='ptag'; tag.textContent='ты ✏️';
-      } else if (speaking) {
-        tag.className='pspk'; tag.textContent='● говорит';
-      }
-
+      if (isMe) { tag.className='ptag'; tag.textContent='ты ✏️'; }
+      else if (speaking) { tag.className='pspk'; tag.textContent='● говорит'; }
       div.append(dot, nm, tag);
       if (isMe) div.addEventListener('click', startEditing);
       c.appendChild(div);
     });
-
     if (!talking) setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
@@ -414,61 +396,45 @@ async function startApp(initialName) {
     if (isEditing) return;
     isEditing = true;
     const c = $('m-plist');
-    // Найти строку себя и заменить
     const rows = c.querySelectorAll('.pi');
     const myRow = Array.from(rows).find(r => r.classList.contains('me-row'));
     if (!myRow) return;
-
     myRow.classList.add('editing');
     myRow.removeEventListener('click', startEditing);
     myRow.innerHTML = '';
-
     const dot = document.createElement('div'); dot.className='pd me';
-
     const input = document.createElement('input');
     input.className='pname-input'; input.type='text';
     input.value=currentMyName; input.maxLength=18;
     input.placeholder='Твоё имя';
     input.autocomplete='off'; input.autocorrect='off'; input.spellcheck=false;
-
     const btn = document.createElement('button'); btn.className='save-btn'; btn.textContent='Готово';
-
     const save = () => {
       const newName = input.value.trim();
       if (newName && newName !== currentMyName) {
-        currentMyName = newName;
-        myName = newName;
+        currentMyName = newName; myName = newName;
         localStorage.setItem('racia_name', newName);
         if (presence[myUid]) presence[myUid].name = newName;
         fbPut(room,'users/'+myUid+'/name', newName);
       }
-      isEditing = false;
-      renderList();
+      isEditing = false; renderList();
     };
-
     btn.addEventListener('click', save);
     input.addEventListener('keydown', e => { if(e.key==='Enter'){input.blur();} if(e.key==='Escape'){isEditing=false;renderList();} });
     input.addEventListener('blur', () => setTimeout(save, 200));
-
     myRow.append(dot, input, btn);
     setTimeout(() => { input.focus(); input.select(); }, 50);
   }
 
   // ── Микрофон ─────────────────────────────────────────────────────────────
-  // Вызывать только из обработчика нажатия (user gesture) — иначе iOS блокирует
   async function acquireStream() {
     if (localStream) return localStream;
-    // audio:true — максимальная совместимость с iOS Safari
     localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
     localStream.getAudioTracks().forEach(t => {
       t.enabled = false;
-      // Если ОС убила трек (iOS при переключении вкладок) — сбрасываем стрим
       t.onended = () => {
         localStream = null;
-        if (talking) {
-          stopTalk();
-          toast(OPEN_MODE ? 'Микрофон отключился — нажми кнопку снова' : 'Микрофон отключился');
-        }
+        if (talking) { stopTalk(); toast(OPEN_MODE ? 'Микрофон отключился — нажми кнопку снова' : 'Микрофон отключился'); }
       };
     });
     return localStream;
@@ -477,33 +443,19 @@ async function startApp(initialName) {
   // ── Восстановление после возврата на вкладку ──────────────────────────────
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
-    // Сразу обновляем своё присутствие — пока страница была в фоне, heartbeat мог тормозить
     doHeartbeat();
-    // AudioContext может быть приостановлен когда страница в фоне — возобновляем
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(()=>{});
-    }
-
-    // 1. Проверяем микрофонный трек
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
     if (localStream) {
       const track = localStream.getAudioTracks()[0];
       if (!track || track.readyState === 'ended') {
-        // iOS убила трек пока мы были на другой вкладке
         localStream = null;
-        if (talking) {
-          stopTalk();
-          toast(OPEN_MODE ? 'Нажми кнопку — микрофон отключился' : 'Микрофон отключился');
-        }
+        if (talking) { stopTalk(); toast(OPEN_MODE ? 'Нажми кнопку — микрофон отключился' : 'Микрофон отключился'); }
       } else if (talking && track.readyState === 'live') {
-        // Android: трек жив — просто переключаем обратно
         track.enabled = true;
       }
     }
-
-    // 2. Рестартуем ICE-соединения, которые упали пока вкладка была скрыта
     for (const [remoteUid, {pc}] of Object.entries(peers)) {
-      if ((pc.connectionState === 'failed' || pc.connectionState === 'disconnected')
-          && pc.signalingState === 'stable') {
+      if ((pc.connectionState === 'failed' || pc.connectionState === 'disconnected') && pc.signalingState === 'stable') {
         try {
           const offer = await pc.createOffer({iceRestart:true});
           await pc.setLocalDescription(offer);
@@ -516,8 +468,8 @@ async function startApp(initialName) {
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
   // audioCtx и getAudioCtx — на уровне модуля (разблокированы через сплэш)
-  const peerNodes = {}; // remoteUid → GainNode (для управления громкостью)
-  const VOLUME = 3; // усилитель громкости (1 = нормально, 3 = громче)
+  const peerNodes = {};
+  const VOLUME = 3;
 
   function playViaCtx(remoteUid, stream) {
     if (!audioCtx || audioCtx.state !== 'running') return false;
@@ -534,8 +486,6 @@ async function startApp(initialName) {
     return true;
   }
 
-  // Подключить все существующие аудиопотоки через AudioContext
-  // (вызывается из startTalk как страховка)
   function tryPlayAll() {
     if (!audioCtx || audioCtx.state !== 'running') return;
     document.querySelectorAll('audio').forEach(a => {
@@ -555,11 +505,10 @@ async function startApp(initialName) {
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = stream;
-      // AudioContext разблокирован через сплэш — playViaCtx должен всегда работать
       if (playViaCtx(remoteUid, stream)) {
         a.muted = true;
       } else {
-        // Страховка: если AudioContext ещё не готов (очень редкий случай)
+        // Страховка: AudioContext ещё не готов
         a.muted = muted;
         a.play().catch(e => dbg('play-fail', String(e)));
       }
@@ -567,7 +516,6 @@ async function startApp(initialName) {
 
     pc.onicecandidate = ({candidate}) => {
       if(!candidate) return;
-      // Логируем relay-кандидаты — если их нет, TURN не работает
       if(candidate.type==='relay') dbg('ICE-relay✓', candidate.relatedAddress+' via '+candidate.address);
       const idx = peers[remoteUid].iceTx++;
       fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
@@ -580,16 +528,12 @@ async function startApp(initialName) {
     // Восстановление соединения при разрыве
     pc.onconnectionstatechange = async () => {
       dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
-
-      // Сбрасываем таймер при любом изменении состояния
       if (peers[remoteUid] && peers[remoteUid].disconnectTimer) {
         clearTimeout(peers[remoteUid].disconnectTimer);
         peers[remoteUid].disconnectTimer = null;
       }
-
       if (pc.connectionState === 'failed') {
         if (pc.signalingState === 'stable') {
-          // ICE restart: быстрее чем полное пересоздание
           try {
             const offer = await pc.createOffer({iceRestart:true});
             await pc.setLocalDescription(offer);
@@ -598,16 +542,14 @@ async function startApp(initialName) {
             if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
           } catch(e) {}
         } else {
-          // Сигнализация не в стабильном состоянии — полное пересоздание
-          dbg('conn-fail-full-reset', remoteUid.slice(0,6));
+          dbg('conn-fail-reset', remoteUid.slice(0,6));
           dropPeer(remoteUid);
           if (presence[remoteUid]) sendOffer(remoteUid);
         }
       } else if (pc.connectionState === 'disconnected') {
-        // Даём 8с на самовосстановление, потом принудительный рестарт
         if (peers[remoteUid]) {
-          peers[remoteUid].disconnectTimer = setTimeout(async () => {
-            if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return; // уже заменён
+          peers[remoteUid].disconnectTimer = setTimeout(() => {
+            if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return;
             if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
             dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
             dropPeer(remoteUid);
@@ -624,12 +566,11 @@ async function startApp(initialName) {
     return pc;
   }
 
-  const SESSION_START = Date.now(); // ID текущей сессии
+  const SESSION_START = Date.now();
 
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
-    // Запоминаем время отправки — используем для детекции зависшего offer
     peers[remoteUid].offerSentAt = Date.now();
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
@@ -637,13 +578,10 @@ async function startApp(initialName) {
       .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
       .replace(/\r\na=inactive/g, '\r\na=sendrecv');
     await pc.setLocalDescription({type:'offer', sdp});
-    // ts: Date.now() — время отправки, не запуска сессии!
-    // Иначе если десктоп открыт >60с до прихода телефона — оффер отклоняется как стейл
     fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp,ts:Date.now()});
   }
 
   async function handleOffer(remoteUid, data) {
-    // Игнорируем сигналы старше 60 сек — защита если cleanup при старте не сработал
     if (data.ts && Date.now() - data.ts > 60000) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
     dbg('handleOffer←', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
@@ -651,14 +589,12 @@ async function startApp(initialName) {
       if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
       if(pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState, remoteUid.slice(0,6)); return; }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      // Устанавливаем sendrecv через API ДО createAnswer — иначе Chrome тихо игнорирует SDP-правку
       pc.getTransceivers().forEach(tc => {
         if (tc.receiver.track && tc.receiver.track.kind === 'audio') {
           try { tc.direction = 'sendrecv'; } catch(_) {}
         }
       });
       const ans = await pc.createAnswer();
-      // Дополнительная страховка: правим SDP напрямую (на случай если API не сработал)
       const sdp = ans.sdp
         .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
         .replace(/\r\na=inactive/g, '\r\na=sendrecv');
@@ -676,7 +612,6 @@ async function startApp(initialName) {
     try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
   }
 
-  // Закрыть и удалить PC для пира (чтобы пересоздать)
   function dropPeer(remoteUid) {
     if (peers[remoteUid]) {
       if (peers[remoteUid].disconnectTimer) clearTimeout(peers[remoteUid].disconnectTimer);
@@ -688,8 +623,6 @@ async function startApp(initialName) {
   }
 
   // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
-  // Дожидаемся удаления, чтобы SSE не получил протухшие сигналы при подключении.
-  // try/catch: если Firebase недоступен — не блокируем запуск приложения.
   try {
     await Promise.all([
       fbDel(room,'signals/'+myUid),
@@ -703,7 +636,6 @@ async function startApp(initialName) {
   dbg('registered', 'uid='+myUid.slice(0,6)+' room='+room);
   fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
 
-  // Удаляем себя при закрытии: и beforeunload, и pagehide (pagehide надёжнее на мобиле)
   function onLeave() {
     fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
     fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
@@ -711,42 +643,33 @@ async function startApp(initialName) {
   window.addEventListener('beforeunload', onLeave);
   window.addEventListener('pagehide', onLeave);
 
-  // Heartbeat — полная запись каждые 8 сек.
-  // Полная запись (не только /ts) — если наша запись была удалена, восстановимся сами.
   const doHeartbeat = () => fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
   setInterval(doHeartbeat, 8000);
 
-  // ── Детектор ушедших участников (без Firebase-запросов) ──────────────────
-  // Каждый heartbeat пира обновляет Firebase → SSE приходит к нам → обновляем lastSeen.
-  // Если lastSeen не обновлялся 28 сек (3.5 цикла) — пир ушёл.
+  // ── Детектор ушедших участников ──────────────────────────────────────────
   const lastSeen = {};
-
   setInterval(() => {
     const now = Date.now();
     let changed = false;
     Object.keys(lastSeen).forEach(uid => {
       if (now - lastSeen[uid] > 28000) {
-        fbDel(room,'users/'+uid);
-        fbDel(room,'talking/'+uid);
+        fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
         delete presence[uid]; delete peerSids[uid]; delete lastSeen[uid];
-        dropPeer(uid);
-        changed = true;
+        dropPeer(uid); changed = true;
       }
     });
     if (changed) renderList();
   }, 8000);
 
-  // Резервная чистка через Firebase-запрос (на случай пустых записей без имени)
   async function cleanGhosts() {
     let all;
     try { const res = await fetch(fbUrl(room,'users')); all = await res.json(); } catch(e){ return; }
     if (!all) return;
     Object.entries(all).forEach(([uid, data]) => {
       if (uid === myUid) return;
-      if (!data || !data.name) { // только записи вообще без имени
+      if (!data || !data.name) {
         fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
-        delete presence[uid]; delete lastSeen[uid];
-        dropPeer(uid);
+        delete presence[uid]; delete lastSeen[uid]; dropPeer(uid);
       }
     });
     renderList();
@@ -755,43 +678,32 @@ async function startApp(initialName) {
   setInterval(cleanGhosts, 60000);
 
   // ── Слушатели Firebase ────────────────────────────────────────────────────
-  // sid каждого пира, которого мы видим (чтобы детектировать перезагрузку)
   const peerSids = {};
 
   fbListen(room,'users',(path,data)=>{
     const proc=(uid,d)=>{
       if(uid===myUid)return;
       if(!d || !d.name){
-        // нет данных или нет имени — призрак, удаляем
         if(d && !d.name) { fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid); }
-        delete presence[uid]; delete peerSids[uid];
-        dropPeer(uid);
+        delete presence[uid]; delete peerSids[uid]; dropPeer(uid);
       } else {
         const sidChanged = d.sid && peerSids[uid] && peerSids[uid] !== d.sid;
-        if (sidChanged) {
-          // Пир перезагрузился → закрываем старый PC и пересоздаём соединение
-          dropPeer(uid);
-          delete presence[uid];
-        }
+        if (sidChanged) { dropPeer(uid); delete presence[uid]; }
         if (d.sid) peerSids[uid] = d.sid;
-
-        lastSeen[uid] = Date.now(); // обновляем при каждом SSE-событии от пира
-
+        lastSeen[uid] = Date.now();
         if (!presence[uid]) {
-          // Новый пир (или после перезагрузки) → устанавливаем соединение
           presence[uid]={name:d.name,speaking:false};
           if(myUid<uid) {
             sendOffer(uid);
           } else {
-            // Мы answerer — ждём offer 5с, если нет — сами инициируем
-            // Это фиксит race condition: offer потерялся при старте, мы не ждём 53с
+            // Answerer: ждём offer 5с, если нет — сами инициируем (fix race condition)
             const capName = d.name;
             setTimeout(() => {
-              if (!presence[uid]) return; // пир ушёл
+              if (!presence[uid]) return;
               const p = peers[uid];
               const ice = p && p.pc.iceConnectionState;
               if (!p || (ice !== 'connected' && ice !== 'completed' && ice !== 'checking')) {
-                dbg('offer-fallback', uid.slice(0,6)+' no offer in 5s, initiating');
+                dbg('offer-fallback', uid.slice(0,6)+' no offer in 5s');
                 if (p) dropPeer(uid);
                 if (!presence[uid]) presence[uid] = {name:capName, speaking:false};
                 sendOffer(uid);
@@ -799,12 +711,8 @@ async function startApp(initialName) {
             }, 5000);
           }
         } else {
-          // Обновить имя если изменилось
           presence[uid].name = d.name;
-          // Восстановление: если мы оферрор и offer завис без ответа >12с — переотправляем.
-          // Это фиксит race condition: offer отправлен до того, как answerer начал слушать
-          // (answerer удалил signals при старте → offer потерялся → answerer ждёт, мы ждём).
-          // Каждый heartbeat пира (каждые 8с) мы проверяем состояние PC.
+          // Если оферрор и offer завис без ответа >8с — переотправляем
           if (myUid < uid) {
             if (!peers[uid]) {
               dbg('offer-failsafe', uid.slice(0,6)+' no PC, resend');
@@ -813,7 +721,6 @@ async function startApp(initialName) {
               const pc = peers[uid].pc;
               const age = Date.now() - (peers[uid].offerSentAt || 0);
               if (pc.signalingState === 'have-local-offer' && age > 8000) {
-                // Offer завис: answerer не ответил за 8с → пересоздаём соединение
                 dbg('offer-timeout→retry', uid.slice(0,6)+' age='+(age/1000|0)+'s');
                 dropPeer(uid);
                 delete presence[uid];
@@ -848,7 +755,6 @@ async function startApp(initialName) {
   renderList();
   setStatus('Онлайн: 1 чел.');
 
-  // Текст подсказки зависит от режима
   const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы начать говорить' : 'Удерживай кнопку чтобы говорить';
   const HINT_TALK = OPEN_MODE ? 'Нажми чтобы замолчать'       : 'Отпусти, чтобы замолчать';
   $('m-hint').textContent = HINT_IDLE;
@@ -857,21 +763,15 @@ async function startApp(initialName) {
   async function startTalk() {
     if(talking||tbtn.disabled)return;
     try {
-      // acquireStream — только из user gesture (iOS + Chrome требуют)
       const s = await acquireStream();
       s.getAudioTracks().forEach(t => t.enabled = true);
       const audioTrack = s.getAudioTracks()[0];
-
       for (const [remoteUid, {pc}] of Object.entries(peers)) {
-        // Ищем уже существующий audio-sender (addTransceiver создаёт sender с track=null).
-        // НЕ используем addTrack — это создаст второй трансивер и сломает SDP.
         const sender = pc.getSenders().find(snd => !snd.track || snd.track.kind === 'audio');
         if (sender) {
-          // replaceTrack не требует пересогласовки — канал уже есть в SDP.
           dbg('replaceTrack→', remoteUid.slice(0,6)+' track='+audioTrack.readyState+' en='+audioTrack.enabled);
           sender.replaceTrack(audioTrack).catch(e=>dbg('replaceTrack-ERR',String(e)));
         } else {
-          // Fallback: sender-а нет вообще → addTrack + явный новый offer
           pc.addTrack(audioTrack, s);
           if (pc.signalingState === 'stable') {
             try {
@@ -882,13 +782,13 @@ async function startApp(initialName) {
           }
         }
       }
-
-      tryPlayAll(); // разблокируем воспроизведение (user gesture)
+      tryPlayAll();
       talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent=HINT_TALK;
       setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
       fbPut(room,'talking/'+myUid,true);
     } catch(e){ toast('Нет доступа к микрофону'); }
   }
+
   function stopTalk() {
     if(!talking)return;
     if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=false);
@@ -898,13 +798,8 @@ async function startApp(initialName) {
   }
 
   if (OPEN_MODE) {
-    // Открытый режим: кнопка-переключатель (один тап = включить, второй = выключить)
-    tbtn.addEventListener('click', e => {
-      e.preventDefault();
-      if (talking) stopTalk(); else startTalk();
-    });
+    tbtn.addEventListener('click', e => { e.preventDefault(); if (talking) stopTalk(); else startTalk(); });
   } else {
-    // PTT: удерживай кнопку
     tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
     tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
     tbtn.addEventListener('mouseup',    stopTalk);
@@ -916,7 +811,6 @@ async function startApp(initialName) {
   mbtn.addEventListener('click',()=>{
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
     document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
-    // Управляем громкостью через AudioContext gain nodes
     Object.values(peerNodes).forEach(gain=>{ gain.gain.value = muted ? 0 : VOLUME; });
     toast(muted?'Звук выключен':'Звук включён');
   });
