@@ -86,10 +86,31 @@
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
-    /* Кнопка разблокировки autoplay — z-index выше debug панели (999) */
-    #unlock-audio { display:none; position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:var(--blue); color:#fff; border:none; border-radius:22px; padding:12px 24px; font-size:.95rem; font-weight:700; cursor:pointer; box-shadow:0 4px 20px rgba(74,158,255,.5); z-index:1001; white-space:nowrap; animation: pulse-btn 1.5s infinite; }
-    #unlock-audio.on { display:block; }
-    @keyframes pulse-btn { 0%,100%{box-shadow:0 4px 20px rgba(74,158,255,.5)} 50%{box-shadow:0 4px 32px rgba(74,158,255,.9)} }
+    /* ── Сплэш-экран ── */
+    #splash {
+      position:fixed; inset:0; z-index:3000;
+      background:var(--bg);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+      cursor:pointer; -webkit-tap-highlight-color:transparent;
+      transition:opacity .35s ease;
+      user-select:none; -webkit-user-select:none;
+    }
+    #splash.out { opacity:0; pointer-events:none; }
+    .sp-logo { font-size:3rem; line-height:1; }
+    .sp-title { font-size:1.5rem; font-weight:800; letter-spacing:.02em; }
+    .sp-room-lbl { color:var(--muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.1em; margin-top:8px; }
+    .sp-room-badge { background:rgba(74,158,255,.1); border:1px solid rgba(74,158,255,.24); color:var(--blue); font-size:.85rem; font-weight:700; letter-spacing:.1em; padding:3px 14px; border-radius:20px; }
+    .sp-btn {
+      margin-top:24px; width:148px; height:148px; border-radius:50%; border:none;
+      background:radial-gradient(circle at 38% 35%,#4a9eff,#1a6fd4);
+      box-shadow:0 0 0 10px rgba(74,158,255,.08),0 8px 32px rgba(74,158,255,.4),inset 0 2px 0 rgba(255,255,255,.2);
+      color:#fff; font-size:.95rem; font-weight:800; letter-spacing:.14em;
+      display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px;
+      pointer-events:none;
+      transition:transform .08s, box-shadow .08s;
+    }
+    #splash:active .sp-btn { transform:scale(.93); box-shadow:0 0 0 10px rgba(74,158,255,.12),0 4px 20px rgba(74,158,255,.3),inset 0 2px 0 rgba(255,255,255,.15); }
+    .sp-hint { color:var(--muted); font-size:.72rem; margin-top:10px; }
 
     /* ── Debug panel ── */
     #dbg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:999; flex-direction:column; font-family:monospace; font-size:11px; color:#ccc; }
@@ -147,7 +168,19 @@
 </div>
 
 <div id="toast"></div>
-<button id="unlock-audio">🔊 Нажми чтобы услышать</button>
+
+<!-- Сплэш — перекрывает всё, тап разблокирует AudioContext до прихода звука -->
+<div id="splash">
+  <div class="sp-logo">🏔️</div>
+  <div class="sp-title">Поболтушки</div>
+  <div class="sp-room-lbl">Комната</div>
+  <div class="sp-room-badge" id="sp-room">—</div>
+  <div class="sp-btn">
+    <span style="font-size:1.9rem">🎙️</span>
+    <span>ВОЙТИ</span>
+  </div>
+  <div class="sp-hint">Нажми чтобы войти</div>
+</div>
 
 <div id="dbg">
   <div id="dbg-head">
@@ -222,9 +255,34 @@ if (!room) {
   const u = new URL(location.href); u.searchParams.set('room',room); history.replaceState({},'',u);
 }
 $('m-room').textContent = room;
+$('sp-room').textContent = room; // показываем комнату на сплэше
 
 // Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
 const OPEN_MODE = P.get('open') === '1';
+
+// ── AudioContext на уровне модуля — разблокируется через тап на сплэше ───────
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// ── Сплэш: тап разблокирует AudioContext до прихода любого звука ─────────────
+(function initSplash() {
+  const splash = $('splash');
+  function enterRoom(e) {
+    // Разблокируем AudioContext СИНХРОННО внутри жеста — iOS Safari требует этого
+    const ctx = getAudioCtx();
+    ctx.resume().catch(()=>{});
+    dbg('splash-enter', 'ctx='+ctx.state);
+    splash.classList.add('out');
+    setTimeout(() => { splash.style.display = 'none'; }, 380);
+    splash.removeEventListener('click',   enterRoom);
+    splash.removeEventListener('touchend', enterRoom);
+  }
+  splash.addEventListener('click',    enterRoom);
+  splash.addEventListener('touchend', e => { e.preventDefault(); enterRoom(e); });
+})();
 
 // ── Debug ─────────────────────────────────────────────────────────────────────
 const DEBUG_MODE = P.get('debug') === '1';
@@ -457,27 +515,16 @@ async function startApp(initialName) {
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
-  // ── AudioContext (надёжнее чем audio.play() на мобильных браузерах) ───────
-  // Один AudioContext на всю страницу. После resume() через жест пользователя
-  // воспроизводит любой MediaStream без блокировки autoplay.
-  let audioCtx = null;
+  // audioCtx и getAudioCtx — на уровне модуля (разблокированы через сплэш)
   const peerNodes = {}; // remoteUid → GainNode (для управления громкостью)
-
-  function getAudioCtx() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    return audioCtx;
-  }
-
   const VOLUME = 3; // усилитель громкости (1 = нормально, 3 = громче)
 
   function playViaCtx(remoteUid, stream) {
     if (!audioCtx || audioCtx.state !== 'running') return false;
-    // Отключаем старый узел
     if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} }
     const src = audioCtx.createMediaStreamSource(stream);
     const gain = audioCtx.createGain();
     gain.gain.value = muted ? 0 : VOLUME;
-    // Компрессор — предотвращает искажения при высоком усилении
     const comp = audioCtx.createDynamicsCompressor();
     comp.threshold.value = -24; comp.knee.value = 30;
     comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
@@ -487,44 +534,15 @@ async function startApp(initialName) {
     return true;
   }
 
-  // Разблокировать autoplay при любом касании — Chrome и Safari блокируют без жеста
-  const unlockBtn = $('unlock-audio');
-  let audioBlocked = false;
-
+  // Подключить все существующие аудиопотоки через AudioContext
+  // (вызывается из startTalk как страховка)
   function tryPlayAll() {
-    // ШАГ 1 — СИНХРОННО в стеке жеста: iOS Safari принимает play() только так
+    if (!audioCtx || audioCtx.state !== 'running') return;
     document.querySelectorAll('audio').forEach(a => {
-      if (a.srcObject && a.paused) { a.muted = false; a.play().catch(()=>{}); }
-    });
-    // ШАГ 2 — async AudioContext: resume и подключение через GainNode
-    const ctx = getAudioCtx();
-    ctx.resume().then(() => {
-      document.querySelectorAll('audio').forEach(a => {
-        const uid = a.id.replace('a-', '');
-        if (a.srcObject) {
-          // AudioContext надёжнее — используем его, audio элемент заглушаем
-          if (playViaCtx(uid, a.srcObject)) { a.muted = true; return; }
-        }
-      });
-      audioBlocked = false;
-      unlockBtn.classList.remove('on');
+      const uid = a.id.replace('a-', '');
+      if (a.srcObject && playViaCtx(uid, a.srcObject)) { a.muted = true; }
     });
   }
-  function showUnlockBtn() {
-    if (!audioBlocked) { audioBlocked=true; unlockBtn.classList.add('on'); }
-  }
-
-  const hideUnlock = () => {
-    tryPlayAll(); // play() вызывается синхронно внутри (iOS требует)
-    unlockBtn.classList.remove('on');
-    audioBlocked = false;
-    toast('Звук разблокирован 🔊');
-  };
-  unlockBtn.addEventListener('click', hideUnlock);
-  unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); hideUnlock(); });
-
-  document.addEventListener('touchstart', tryPlayAll, {passive:true});
-  document.addEventListener('mousedown',  tryPlayAll);
 
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
@@ -537,17 +555,14 @@ async function startApp(initialName) {
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
       a.srcObject = stream;
-      // Пробуем AudioContext сначала (не блокируется autoplay политикой)
+      // AudioContext разблокирован через сплэш — playViaCtx должен всегда работать
       if (playViaCtx(remoteUid, stream)) {
-        a.muted = true; // AudioContext играет, audio элемент заглушаем
-        return;
+        a.muted = true;
+      } else {
+        // Страховка: если AudioContext ещё не готов (очень редкий случай)
+        a.muted = muted;
+        a.play().catch(e => dbg('play-fail', String(e)));
       }
-      // Fallback: обычный audio.play()
-      a.muted = muted;
-      a.play().catch(e=>{
-        dbg('play-fail', String(e));
-        showUnlockBtn(); // показываем кнопку — пользователь тапнет → AudioContext разблокируется
-      });
     };
 
     pc.onicecandidate = ({candidate}) => {
