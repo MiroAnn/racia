@@ -411,6 +411,10 @@ async function startApp(initialName) {
     if (document.visibilityState !== 'visible') return;
     // Сразу обновляем своё присутствие — пока страница была в фоне, heartbeat мог тормозить
     doHeartbeat();
+    // AudioContext может быть приостановлен когда страница в фоне — возобновляем
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(()=>{});
+    }
 
     // 1. Проверяем микрофонный трек
     if (localStream) {
@@ -443,28 +447,54 @@ async function startApp(initialName) {
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
 
+  // ── AudioContext (надёжнее чем audio.play() на мобильных браузерах) ───────
+  // Один AudioContext на всю страницу. После resume() через жест пользователя
+  // воспроизводит любой MediaStream без блокировки autoplay.
+  let audioCtx = null;
+  const peerNodes = {}; // remoteUid → GainNode (для управления громкостью)
+
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  function playViaCtx(remoteUid, stream) {
+    if (!audioCtx || audioCtx.state !== 'running') return false;
+    // Отключаем старый узел
+    if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} }
+    const src = audioCtx.createMediaStreamSource(stream);
+    const gain = audioCtx.createGain();
+    gain.gain.value = muted ? 0 : 1;
+    src.connect(gain); gain.connect(audioCtx.destination);
+    peerNodes[remoteUid] = gain;
+    dbg('ctx-play', remoteUid.slice(0,6));
+    return true;
+  }
+
   // Разблокировать autoplay при любом касании — Chrome и Safari блокируют без жеста
   const unlockBtn = $('unlock-audio');
   let audioBlocked = false;
 
   function tryPlayAll() {
-    let anyPlayed = false;
-    document.querySelectorAll('audio').forEach(a => {
-      if(a.paused && a.srcObject) {
-        a.play().then(()=>{ anyPlayed=true; audioBlocked=false; unlockBtn.classList.remove('on'); }).catch(()=>{});
-      }
+    const ctx = getAudioCtx();
+    ctx.resume().then(() => {
+      document.querySelectorAll('audio').forEach(a => {
+        const uid = a.id.replace('a-', '');
+        if (a.srcObject) {
+          // AudioContext надёжнее — используем его, audio элемент заглушаем
+          if (playViaCtx(uid, a.srcObject)) { a.muted = true; return; }
+        }
+        if (a.paused && a.srcObject) a.play().catch(()=>{});
+      });
+      audioBlocked = false;
+      unlockBtn.classList.remove('on');
     });
   }
   function showUnlockBtn() {
     if (!audioBlocked) { audioBlocked=true; unlockBtn.classList.add('on'); }
   }
-  // Показываем кнопку проактивно если есть пиры и аудио на паузе (не ждём ошибки)
-  function checkAutoplay() {
-    const audios = document.querySelectorAll('audio');
-    if ([...audios].some(a => a.paused && a.srcObject)) showUnlockBtn();
-  }
 
-  const hideUnlock = () => { unlockBtn.classList.remove('on'); audioBlocked=false; tryPlayAll(); };
+  const hideUnlock = () => { tryPlayAll(); unlockBtn.classList.remove('on'); audioBlocked=false; };
   unlockBtn.addEventListener('click', hideUnlock);
   unlockBtn.addEventListener('touchend', e=>{ e.preventDefault(); hideUnlock(); });
 
@@ -478,17 +508,20 @@ async function startApp(initialName) {
 
     pc.ontrack = ({track, streams}) => {
       dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
+      const stream = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
       let a = document.getElementById('a-'+remoteUid);
       if (!a) { a=new Audio(); a.id='a-'+remoteUid; a.autoplay=true; document.body.appendChild(a); }
-      a.srcObject = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
+      a.srcObject = stream;
+      // Пробуем AudioContext сначала (не блокируется autoplay политикой)
+      if (playViaCtx(remoteUid, stream)) {
+        a.muted = true; // AudioContext играет, audio элемент заглушаем
+        return;
+      }
+      // Fallback: обычный audio.play()
       a.muted = muted;
       a.play().catch(e=>{
         dbg('play-fail', String(e));
-        showUnlockBtn();
-        // Повторяем через 1с на случай если браузер "разогрелся"
-        setTimeout(()=>{ if(a.paused && a.srcObject) a.play().catch(()=>{}); }, 1000);
-        // Через 3с — точно покажем кнопку
-        setTimeout(checkAutoplay, 3000);
+        showUnlockBtn(); // показываем кнопку — пользователь тапнет → AudioContext разблокируется
       });
     };
 
@@ -576,6 +609,7 @@ async function startApp(initialName) {
   function dropPeer(remoteUid) {
     if (peers[remoteUid]) { try{peers[remoteUid].pc.close();}catch(_){} delete peers[remoteUid]; }
     const a = document.getElementById('a-'+remoteUid); if(a) a.remove();
+    if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
   }
 
   // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
@@ -768,7 +802,9 @@ async function startApp(initialName) {
 
   mbtn.addEventListener('click',()=>{
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
-    document.querySelectorAll('audio').forEach(a=>{a.muted=muted;});
+    document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
+    // Управляем громкостью через AudioContext gain nodes
+    Object.values(peerNodes).forEach(gain=>{ gain.gain.value = muted ? 0 : 1; });
     toast(muted?'Звук выключен':'Звук включён');
   });
 }
