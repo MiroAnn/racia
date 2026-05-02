@@ -197,14 +197,20 @@ function fbUrl(room,path) { return DB+'/rooms/'+room+'/'+path+'.json'; }
 function fbPut(room,path,val) { return fetch(fbUrl(room,path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)}); }
 function fbDel(room,path)    { return fetch(fbUrl(room,path),{method:'DELETE'}); }
 function fbListen(room,path,cb) {
+  const isSignals = path.startsWith('signals/');
   const es = new EventSource(fbUrl(room,path)+'?stream=true');
   es.addEventListener('put', e => {
     const d=JSON.parse(e.data);
     if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
+    if(isSignals && d.data) {
+      // Логируем тип сигнала чтобы знать, доходят ли offer/answer
+      const inner = d.path==='/' ? Object.values(d.data)[0] : d.data;
+      dbg('SSE-signal put', 'path='+d.path+' type='+(inner&&inner.type||'?'));
+    }
     cb(d.path,d.data);
   });
-  es.addEventListener('error', ()=> { if(path==='users') dbg('SSE-users ERROR'); });
-  es.addEventListener('open',  ()=> { if(path==='users') dbg('SSE-users OPEN'); });
+  es.addEventListener('error', ()=> { dbg('SSE-error', path.slice(0,20)); });
+  es.addEventListener('open',  ()=> { dbg('SSE-open',  path.slice(0,20)); });
   return es;
 }
 
@@ -581,6 +587,8 @@ async function startApp(initialName) {
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
+    // Запоминаем время отправки — используем для детекции зависшего offer
+    peers[remoteUid].offerSentAt = Date.now();
     pc.addTransceiver('audio', {direction:'sendrecv'});
     const offer = await pc.createOffer();
     const sdp = offer.sdp
@@ -730,6 +738,27 @@ async function startApp(initialName) {
         } else {
           // Обновить имя если изменилось
           presence[uid].name = d.name;
+          // Восстановление: если мы оферрор и offer завис без ответа >12с — переотправляем.
+          // Это фиксит race condition: offer отправлен до того, как answerer начал слушать
+          // (answerer удалил signals при старте → offer потерялся → answerer ждёт, мы ждём).
+          // Каждый heartbeat пира (каждые 8с) мы проверяем состояние PC.
+          if (myUid < uid) {
+            if (!peers[uid]) {
+              dbg('offer-failsafe', uid.slice(0,6)+' no PC, resend');
+              sendOffer(uid);
+            } else {
+              const pc = peers[uid].pc;
+              const age = Date.now() - (peers[uid].offerSentAt || 0);
+              if (pc.signalingState === 'have-local-offer' && age > 12000) {
+                // Offer завис: answerer не ответил за 12с → пересоздаём соединение
+                dbg('offer-timeout→retry', uid.slice(0,6)+' age='+(age/1000|0)+'s');
+                dropPeer(uid);
+                delete presence[uid];
+                presence[uid]={name:d.name,speaking:false};
+                sendOffer(uid);
+              }
+            }
+          }
         }
       }
     };
