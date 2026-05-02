@@ -509,13 +509,7 @@ async function startApp(initialName) {
       if (e) e.preventDefault();
       btn.remove(); unlockBtnShown = false;
       dbg('unlock-btn-tap', '');
-      // Resumeим AudioContext — звук через WebAudio граф потечёт автоматически
-      // (createMediaStreamSource уже подключен в ontrack)
-      const ctx = getAudioCtx();
-      ctx.resume().then(() => {
-        dbg('unlock-ctx-resumed', ctx.state);
-        tryPlayAll(); // также поднимаем iOS audio элементы
-      }).catch(() => tryPlayAll());
+      tryPlayAll();
     };
     btn.addEventListener('click',    doUnlock);
     btn.addEventListener('touchend', doUnlock, {passive:false});
@@ -586,16 +580,13 @@ async function startApp(initialName) {
   }
 
   function tryPlayAll() {
-    // WebAudio gain nodes — обновляем громкость (они уже подключены к destination)
-    Object.values(peerNodes).forEach(gain => {
-      if (gain) gain.gain.value = muted ? 0 : VOLUME;
-    });
-    hideAudioUnlock();
-    // iOS audio элементы — best-effort play для routing (muted=true, звук через WebAudio)
     document.querySelectorAll('audio').forEach(a => {
       if (a.srcObject) {
         a.muted = true;
-        a.play().catch(e => dbg('tryplay-fail', String(e)));
+        a.play().then(() => {
+          a.muted = muted;
+          hideAudioUnlock();
+        }).catch(e => dbg('tryplay-fail', String(e)));
       }
     });
   }
@@ -610,25 +601,6 @@ async function startApp(initialName) {
     pc.ontrack = ({track, streams}) => {
       dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
       const stream = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
-
-      // ── Путь 1: WebAudio (не требует play() — звук идёт автоматически когда ctx running) ──
-      // Если ctx уже running — звук сразу, без какого-либо gesture.
-      // Если suspended — звук пойдёт как только пользователь разблокирует ctx (тап на unlock или splash).
-      if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
-      const audioCtxNow = getAudioCtx(); // lazy-create: audioCtx может быть null в debug mode
-      try {
-        const src = audioCtxNow.createMediaStreamSource(stream);
-        const gain = audioCtxNow.createGain();
-        gain.gain.value = muted ? 0 : VOLUME;
-        const comp = audioCtxNow.createDynamicsCompressor();
-        comp.threshold.value = -24; comp.knee.value = 30;
-        comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
-        src.connect(gain); gain.connect(comp); comp.connect(audioCtxNow.destination);
-        peerNodes[remoteUid] = gain;
-        dbg('ctx-pipe', remoteUid.slice(0,6)+' ctx='+audioCtxNow.state);
-      } catch(e) { dbg('ctx-pipe-err', String(e)); }
-
-      // ── Путь 2: <audio> элемент для iOS speaker-routing (иначе идёт в earpiece) ──
       let a = document.getElementById('a-'+remoteUid);
       if (!a) {
         a = new Audio(); a.id = 'a-'+remoteUid; a.autoplay = true;
@@ -637,24 +609,25 @@ async function startApp(initialName) {
         document.body.appendChild(a);
       }
       a.srcObject = stream;
-      a.muted = true; // всегда muted — звук даёт WebAudio граф; элемент нужен только для iOS routing
-
-      if (audioCtxNow.state === 'running') {
-        // AudioContext уже разблокирован — звук идёт через граф, никакой задержки
-        a.play().catch(()=>{}); // best-effort для iOS routing (ошибка не страшна — WebAudio уже играет)
+      a.muted = true;
+      a.play().then(() => {
+        a.muted = muted;
         hideAudioUnlock();
-        dbg('play-ctx-ok', remoteUid.slice(0,6));
-      } else {
-        // AudioContext suspended — ждём gesture; показываем unlock кнопку
-        a.play().then(() => {
-          // play() прошёл — на iOS аудио-сессия открыта, WebAudio заработает после resume
-          dbg('play-elem-ok', remoteUid.slice(0,6));
-        }).catch(e => {
-          dbg('play-fail', String(e));
-        });
+        dbg('play-ok', remoteUid.slice(0,6));
+      }).catch(e => {
+        dbg('play-fail', String(e));
         showAudioUnlock();
-        dbg('waiting-gesture', remoteUid.slice(0,6));
-      }
+        const retryPlay = (ev) => {
+          dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
+          a.muted = true;
+          a.play()
+            .then(() => { a.muted = muted; hideAudioUnlock(); dbg('play-retry-ok', remoteUid.slice(0,6)); })
+            .catch(e2 => dbg('play-retry-fail', String(e2)));
+        };
+        ['click','touchstart','keydown'].forEach(ev =>
+          document.addEventListener(ev, retryPlay, {once:true, passive:true})
+        );
+      });
     };
 
     pc.onicecandidate = ({candidate}) => {
@@ -693,15 +666,29 @@ async function startApp(initialName) {
         }
       } else if (pc.connectionState === 'disconnected') {
         if (peers[remoteUid]) {
-          peers[remoteUid].disconnectTimer = setTimeout(() => {
+          peers[remoteUid].disconnectTimer = setTimeout(async () => {
             if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return;
             if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
-            dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
-            dropPeer(remoteUid);
-            // Только оферрор (myUid < remoteUid) переотправляет offer после сброса;
-            // answerer просто ждёт — иначе оба создают PC в have-local-offer → glare
-            if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
-            else if (presence[remoteUid]) dbg('disconnect-wait-offer', remoteUid.slice(0,6));
+            if (myUid < remoteUid && pc.signalingState === 'stable') {
+              // Оферрор: ICE restart на существующем PC — трек и audio сохраняются, звук не прерывается
+              try {
+                dbg('ICE-restart→', remoteUid.slice(0,6));
+                const offer = await pc.createOffer({iceRestart:true});
+                await pc.setLocalDescription(offer);
+                fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
+                if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
+              } catch(e) {
+                dbg('ICE-restart-err→reset', String(e).slice(0,40));
+                dropPeer(remoteUid);
+                if (presence[remoteUid]) sendOffer(remoteUid);
+              }
+            } else {
+              // Answerer или non-stable: полный reset; answerer ждёт нового offer от оферрора
+              dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
+              dropPeer(remoteUid);
+              if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
+              else if (presence[remoteUid]) dbg('disconnect-wait-offer', remoteUid.slice(0,6));
+            }
           }, 2000);
         }
       }
@@ -976,7 +963,7 @@ async function startApp(initialName) {
 
   mbtn.addEventListener('click',()=>{
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
-    // Звук управляется через WebAudio gain — audio элементы всегда остаются muted
+    document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
     Object.values(peerNodes).forEach(gain=>{ if(gain) gain.gain.value = muted ? 0 : VOLUME; });
     toast(muted?'Звук выключен':'Звук включён');
   });
