@@ -459,6 +459,8 @@ async function startApp(initialName) {
   // ── Блокировка TALK когда кто-то уже говорит ─────────────────────────────
   function updateTalkBtn() {
     if (talking) return; // я сам говорю — кнопку не трогаем
+    if (OPEN_MODE) return; // в открытом режиме все могут говорить одновременно
+    if (unlockBtnShown) return; // пока ждём разблокировки звука — не трогаем кнопку
     const sp = Object.entries(presence).find(([uid, p]) => uid !== myUid && p.speaking);
     if (sp) {
       tbtn.disabled = true;
@@ -543,7 +545,7 @@ async function startApp(initialName) {
   }
   function hideAudioUnlock() {
     const btn = document.getElementById('audio-unlock');
-    if (btn) { btn.remove(); unlockBtnShown = false; }
+    if (btn) { btn.remove(); unlockBtnShown = false; updateTalkBtn(); }
   }
 
   // ── Микрофон ─────────────────────────────────────────────────────────────
