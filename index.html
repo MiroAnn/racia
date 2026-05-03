@@ -77,6 +77,7 @@
       transition: transform .08s, box-shadow .08s, background .1s;
     }
     #tbtn:disabled { background: radial-gradient(circle at 38% 35%, #222238, #161628); box-shadow: 0 5px 18px rgba(0,0,0,.4); cursor: not-allowed; }
+    #tbtn.busy { background: radial-gradient(circle at 38% 35%, #f59e0b, #b45309) !important; box-shadow: 0 0 0 9px rgba(245,158,11,.07),0 0 0 18px rgba(245,158,11,.03),0 9px 24px rgba(245,158,11,.3),inset 0 2px 0 rgba(255,255,255,.15),inset 0 -3px 7px rgba(0,0,0,.25) !important; cursor: not-allowed; }
     #tbtn.pressing { background: radial-gradient(circle at 38% 35%, #ff5f55, #cc2e24); box-shadow: 0 0 0 9px rgba(255,59,48,.1),0 0 0 18px rgba(255,59,48,.04),0 7px 26px rgba(255,59,48,.5),inset 0 2px 0 rgba(255,255,255,.12),inset 0 -3px 7px rgba(0,0,0,.3); transform: scale(.95); }
     .bicon { font-size: 1.9rem; pointer-events: none; }
     .blbl { font-size: .92rem; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.95); pointer-events: none; }
@@ -453,6 +454,22 @@ async function startApp(initialName) {
       c.appendChild(div);
     });
     if (!talking) setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
+  }
+
+  // ── Блокировка TALK когда кто-то уже говорит ─────────────────────────────
+  function updateTalkBtn() {
+    if (talking) return; // я сам говорю — кнопку не трогаем
+    const sp = Object.entries(presence).find(([uid, p]) => uid !== myUid && p.speaking);
+    if (sp) {
+      tbtn.disabled = true;
+      tbtn.classList.add('busy');
+      $('m-hint').textContent = sp[1].name + ' говорит…';
+    } else {
+      tbtn.disabled = false;
+      tbtn.classList.remove('busy');
+      const hint = typeof HINT_IDLE !== 'undefined' ? HINT_IDLE : 'Удерживай кнопку чтобы говорить';
+      $('m-hint').textContent = hint;
+    }
   }
 
   // ── Редактирование имени ─────────────────────────────────────────────────
@@ -930,9 +947,10 @@ async function startApp(initialName) {
 
   fbListen(room,'talking',(path,data)=>{
     const proc=(uid,val)=>{ if(uid===myUid)return; if(presence[uid])presence[uid].speaking=!!val; };
-    if(path==='/'){if(data)Object.entries(data).forEach(([uid,v])=>proc(uid,v));}
+    if(path==='/'){if(data)Object.entries(data).forEach(([uid,v])=>proc(uid,v)); else Object.keys(presence).forEach(uid=>{if(uid!==myUid&&presence[uid])presence[uid].speaking=false;});}
     else proc(path.slice(1),data);
     renderList();
+    updateTalkBtn();
     if(!talking){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
   });
 
@@ -987,9 +1005,11 @@ async function startApp(initialName) {
   function stopTalk() {
     if(!talking)return;
     if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=false);
-    talking=false; tbtn.classList.remove('pressing'); $('m-hint').textContent=HINT_IDLE;
+    talking=false; tbtn.classList.remove('pressing');
     if(presence[myUid])presence[myUid].speaking=false; renderList();
-    fbDel(room,'talking/'+myUid); setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
+    fbDel(room,'talking/'+myUid);
+    updateTalkBtn(); // разблокирует или покажет что кто-то другой говорит
+    setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
   if (OPEN_MODE) {
