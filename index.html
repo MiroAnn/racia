@@ -242,7 +242,7 @@ function fbListen(room,path,cb,{pollMs=0}={}) {
     if (es) { try{es.close();}catch(_){} }
     clearTimeout(reconnTimer);
     sseOk = false;
-    es = new EventSource(fbUrl(room,path)+'?stream=true');
+    es = new EventSource(fbUrl(room,path)); // без ?stream=true — Firebase стримит по Accept: text/event-stream
     es.addEventListener('put', e => {
       sseOk = true;
       const d=JSON.parse(e.data);
