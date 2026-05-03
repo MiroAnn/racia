@@ -235,14 +235,16 @@ function toast(msg) { const el=$('toast'); el.textContent=msg; el.classList.add(
 function fbUrl(room,path) { return DB+'/rooms/'+room+'/'+path+'.json'; }
 function fbPut(room,path,val) { return fetch(fbUrl(room,path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)}); }
 function fbDel(room,path)    { return fetch(fbUrl(room,path),{method:'DELETE'}); }
-function fbListen(room,path,cb) {
+function fbListen(room,path,cb,{pollMs=0}={}) {
   const isSignals = path.startsWith('signals/');
-  let es, reconnTimer;
+  let es, reconnTimer, pollTimer, sseOk = false;
   function connect() {
     if (es) { try{es.close();}catch(_){} }
     clearTimeout(reconnTimer);
+    sseOk = false;
     es = new EventSource(fbUrl(room,path)+'?stream=true');
     es.addEventListener('put', e => {
+      sseOk = true;
       const d=JSON.parse(e.data);
       if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
       if(isSignals && d.data) {
@@ -255,11 +257,31 @@ function fbListen(room,path,cb) {
       dbg('SSE-error', path.slice(0,20));
       // Переподключаемся через 2с — не ждём медленный браузерный backoff
       reconnTimer = setTimeout(connect, 2000);
+      // Мгновенный fetch-фоллбэк: SSE-error и registered часто совпадают —
+      // значит Firebase в этот момент уже доступен
+      if (pollMs > 0) {
+        fetch(fbUrl(room,path))
+          .then(r=>r.json())
+          .then(data=>{ if(data!==null){ dbg('poll-on-error', path.slice(0,20)); cb('/',data); } })
+          .catch(()=>{});
+      }
     });
-    es.addEventListener('open',  ()=> { dbg('SSE-open',  path.slice(0,20)); });
+    es.addEventListener('open',  ()=> { sseOk = true; dbg('SSE-open',  path.slice(0,20)); });
+  }
+  // Polling-фоллбэк: если SSE не работает — делаем обычный GET каждые pollMs мс
+  function poll() {
+    if (pollMs <= 0) return;
+    if (!sseOk) {
+      fetch(fbUrl(room,path))
+        .then(r=>r.json())
+        .then(data=>{ dbg('poll-fallback', path.slice(0,20)); cb('/',data); })
+        .catch(()=>{});
+    }
+    pollTimer = setTimeout(poll, pollMs);
   }
   connect();
-  return { close: ()=>{ clearTimeout(reconnTimer); if(es) es.close(); } };
+  if (pollMs > 0) setTimeout(poll, pollMs); // первый poll через pollMs
+  return { close: ()=>{ clearTimeout(reconnTimer); clearTimeout(pollTimer); if(es) es.close(); } };
 }
 
 // ── Комната и режим ──────────────────────────────────────────────────────────
@@ -937,13 +959,13 @@ async function startApp(initialName) {
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,d])=>proc(uid,d));}
     else proc(path.slice(1),data);
     renderList();
-  });
+  },{pollMs:15000}); // polling-фоллбэк для users если SSE умерла (iOS-проблема)
 
   fbListen(room,'signals/'+myUid,(path,data)=>{
     const proc=(fromUid,sig)=>{ if(!sig)return; if(sig.type==='offer')handleOffer(fromUid,sig); if(sig.type==='answer')handleAnswer(fromUid,sig); };
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,s])=>proc(uid,s));}
     else proc(path.slice(1),data);
-  });
+  },{pollMs:10000}); // polling-фоллбэк для signals если SSE умерла
 
   fbListen(room,'talking',(path,data)=>{
     const proc=(uid,val)=>{ if(uid===myUid)return; if(presence[uid])presence[uid].speaking=!!val; };
