@@ -642,11 +642,11 @@ async function startApp(initialName) {
   // Регистрируем глобально — сплэш вызовет их после gesture
   window._tryPlayAll = tryPlayAll;
 
-  // OPEN_MODE: запускаем микрофон после gesture — без кнопки Talk
+  // OPEN_MODE: запускаем микрофон после gesture — автоматически, как в видеозвонках
   async function openModeStart() {
     try {
       const s = await acquireStream();
-      s.getAudioTracks().forEach(t => t.enabled = !muted);
+      s.getAudioTracks().forEach(t => t.enabled = true);
       talking = true;
       if(presence[myUid]) presence[myUid].speaking = true;
       // Обновляем трек у всех уже существующих соединений
@@ -656,6 +656,9 @@ async function startApp(initialName) {
           if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(track).catch(()=>{});
         });
       }
+      // Обновляем вид кнопки — она теперь мьют-кнопка
+      tbtn.querySelector('.blbl').textContent = 'MIC';
+      $('m-hint').textContent = HINT_IDLE; // "Нажми чтобы замолчать"
       fbPut(room, 'talking/'+myUid, true);
       dbg('open-mic-start', '');
       renderList();
@@ -725,16 +728,6 @@ async function startApp(initialName) {
       if (peers[remoteUid] && peers[remoteUid].disconnectTimer) {
         clearTimeout(peers[remoteUid].disconnectTimer);
         peers[remoteUid].disconnectTimer = null;
-      }
-      if (pc.connectionState === 'connected' && OPEN_MODE && localStream) {
-        // OPEN_MODE: автоматически шлём трек как только ICE установлен
-        const track = localStream.getAudioTracks()[0];
-        if (track && track.readyState === 'live') {
-          pc.getSenders().forEach(snd => {
-            if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(track).catch(()=>{});
-          });
-          dbg('open-autotrack', remoteUid.slice(0,6));
-        }
       }
       if (pc.connectionState === 'failed') {
         // Только оферрор (myUid < remoteUid) вправе инициировать или перезапускать
@@ -864,15 +857,6 @@ async function startApp(initialName) {
       await pc.setLocalDescription({type:'answer', sdp});
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:Date.now()});
       dbg('answer→sent', remoteUid.slice(0,6));
-      // OPEN_MODE: answerer тоже сразу шлёт трек
-      if (OPEN_MODE && localStream) {
-        const openTrack = localStream.getAudioTracks()[0];
-        if (openTrack && openTrack.readyState === 'live') {
-          pc.getSenders().forEach(snd => {
-            if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(openTrack).catch(()=>{});
-          });
-        }
-      }
     } catch(e) { dbg('handleOffer-ERR', String(e)); }
   }
 
@@ -1045,8 +1029,9 @@ async function startApp(initialName) {
 
   tbtn.disabled=false;
   if (OPEN_MODE) {
-    tbtn.style.display = 'none'; // В OPEN_MODE кнопка Talk не нужна
-    $('m-hint').textContent = 'Ты в эфире — все слышат тебя';
+    // В OPEN_MODE кнопка становится мьютом микрофона, не PTT
+    tbtn.querySelector('.blbl').textContent = 'MIC';
+    $('m-hint').textContent = 'Нажми чтобы замолчать';
     // В debug-режиме gesture уже выдан — стартуем микрофон сразу
     if (gestureReady) openModeStart();
   } else {
@@ -1055,8 +1040,8 @@ async function startApp(initialName) {
   renderList();
   setStatus('Подключение...');
 
-  const HINT_IDLE = OPEN_MODE ? '' : 'Удерживай кнопку чтобы говорить';
-  const HINT_TALK = OPEN_MODE ? '' : 'Отпусти, чтобы замолчать';
+  const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы замолчать' : 'Удерживай кнопку чтобы говорить';
+  const HINT_TALK = OPEN_MODE ? 'Нажми чтобы включить микрофон' : 'Отпусти, чтобы замолчать';
 
   // ── PTT / Open-mode ──────────────────────────────────────────────────────
   async function startTalk() {
@@ -1107,8 +1092,27 @@ async function startApp(initialName) {
     fbDel(room,'talking/'+myUid); setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
-  if (!OPEN_MODE) {
-    // PTT: только в не-open режиме
+  if (OPEN_MODE) {
+    // OPEN_MODE: кнопка = мьют/размьют своего микрофона
+    const openToggleMic = (e) => {
+      e.preventDefault();
+      if (!localStream) return; // mic ещё не стартовал
+      const micOn = localStream.getAudioTracks().every(t => t.enabled);
+      localStream.getAudioTracks().forEach(t => t.enabled = !micOn);
+      const nowOn = !micOn;
+      talking = nowOn; // speaking state
+      tbtn.classList.toggle('pressing', !nowOn); // pressing (красный) = замьючен
+      $('m-hint').textContent = nowOn ? HINT_IDLE : HINT_TALK;
+      if(presence[myUid]) presence[myUid].speaking = nowOn;
+      renderList();
+      if (nowOn) fbPut(room,'talking/'+myUid,true);
+      else fbDel(room,'talking/'+myUid);
+      dbg('open-mic-toggle', nowOn?'on':'off');
+    };
+    tbtn.addEventListener('click',     openToggleMic);
+    tbtn.addEventListener('touchend',  openToggleMic, {passive:false});
+  } else {
+    // PTT: удерживать для разговора
     tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
     tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
     tbtn.addEventListener('mouseup',    stopTalk);
@@ -1121,8 +1125,6 @@ async function startApp(initialName) {
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
     document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
     Object.values(peerNodes).forEach(gain=>{ if(gain) gain.gain.value = muted ? 0 : VOLUME; });
-    // В OPEN_MODE мьютим/размьютим и исходящий трек
-    if (OPEN_MODE && localStream) localStream.getAudioTracks().forEach(t => t.enabled = !muted);
     toast(muted?'Звук выключен':'Звук включён');
   });
 }
