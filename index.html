@@ -474,7 +474,7 @@ async function startApp(initialName) {
       if (isMe) div.addEventListener('click', startEditing);
       c.appendChild(div);
     });
-    if (!talking) setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
+    if (!talking || OPEN_MODE) setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
   // ── Редактирование имени ─────────────────────────────────────────────────
@@ -641,11 +641,33 @@ async function startApp(initialName) {
   }
   // Регистрируем глобально — сплэш вызовет их после gesture
   window._tryPlayAll = tryPlayAll;
+
+  // OPEN_MODE: запускаем микрофон после gesture — без кнопки Talk
+  async function openModeStart() {
+    try {
+      const s = await acquireStream();
+      s.getAudioTracks().forEach(t => t.enabled = !muted);
+      talking = true;
+      if(presence[myUid]) presence[myUid].speaking = true;
+      // Обновляем трек у всех уже существующих соединений
+      const track = s.getAudioTracks()[0];
+      for (const [uid, {pc}] of Object.entries(peers)) {
+        pc.getSenders().forEach(snd => {
+          if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(track).catch(()=>{});
+        });
+      }
+      fbPut(room, 'talking/'+myUid, true);
+      dbg('open-mic-start', '');
+      renderList();
+    } catch(e) { toast('Нет доступа к микрофону'); }
+  }
+
   window._onGestureReady = () => {
     // Отправляем офферы которые пришли до gesture (другой уже в комнате когда открыл приложение)
     dbg('gesture-ready', 'pending='+pendingOfferUIDs.size);
     pendingOfferUIDs.forEach(uid => { if (presence[uid]) sendOffer(uid); });
     pendingOfferUIDs.clear();
+    if (OPEN_MODE) openModeStart();
   };
 
   async function makePC(remoteUid) {
@@ -703,6 +725,16 @@ async function startApp(initialName) {
       if (peers[remoteUid] && peers[remoteUid].disconnectTimer) {
         clearTimeout(peers[remoteUid].disconnectTimer);
         peers[remoteUid].disconnectTimer = null;
+      }
+      if (pc.connectionState === 'connected' && OPEN_MODE && localStream) {
+        // OPEN_MODE: автоматически шлём трек как только ICE установлен
+        const track = localStream.getAudioTracks()[0];
+        if (track && track.readyState === 'live') {
+          pc.getSenders().forEach(snd => {
+            if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(track).catch(()=>{});
+          });
+          dbg('open-autotrack', remoteUid.slice(0,6));
+        }
       }
       if (pc.connectionState === 'failed') {
         // Только оферрор (myUid < remoteUid) вправе инициировать или перезапускать
@@ -779,9 +811,18 @@ async function startApp(initialName) {
 
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
+    const isNewPC = !peers[remoteUid]; // проверяем ДО makePC
     const pc = await makePC(remoteUid);
     peers[remoteUid].offerSentAt = Date.now();
-    pc.addTransceiver('audio', {direction:'sendrecv'});
+    if (isNewPC) {
+      // В OPEN_MODE сразу добавляем трек если уже есть стрим; иначе обычный transceiver
+      const openTrack = (OPEN_MODE && localStream) ? localStream.getAudioTracks()[0] : null;
+      if (openTrack && openTrack.readyState === 'live') {
+        pc.addTransceiver(openTrack, {direction:'sendrecv'});
+      } else {
+        pc.addTransceiver('audio', {direction:'sendrecv'}); // только при создании нового PC, иначе senders=2
+      }
+    }
     const offer = await pc.createOffer();
     const sdp = offer.sdp
       .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
@@ -823,6 +864,15 @@ async function startApp(initialName) {
       await pc.setLocalDescription({type:'answer', sdp});
       fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:Date.now()});
       dbg('answer→sent', remoteUid.slice(0,6));
+      // OPEN_MODE: answerer тоже сразу шлёт трек
+      if (OPEN_MODE && localStream) {
+        const openTrack = localStream.getAudioTracks()[0];
+        if (openTrack && openTrack.readyState === 'live') {
+          pc.getSenders().forEach(snd => {
+            if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(openTrack).catch(()=>{});
+          });
+        }
+      }
     } catch(e) { dbg('handleOffer-ERR', String(e)); }
   }
 
@@ -949,8 +999,12 @@ async function startApp(initialName) {
           // Если оферрор и offer завис без ответа >8с — переотправляем
           if (myUid < uid) {
             if (!peers[uid]) {
-              dbg('offer-failsafe', uid.slice(0,6)+' no PC, resend');
-              sendOffer(uid);
+              if (gestureReady) {
+                dbg('offer-failsafe', uid.slice(0,6)+' no PC, resend');
+                sendOffer(uid);
+              } else {
+                pendingOfferUIDs.add(uid); // будет отправлен из gesture-ready
+              }
             } else {
               const pc = peers[uid].pc;
               const age = Date.now() - (peers[uid].offerSentAt || 0);
@@ -969,7 +1023,7 @@ async function startApp(initialName) {
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,d])=>proc(uid,d));}
     else proc(path.slice(1),data);
     renderList();
-    if(!talking){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
+    if(!talking || OPEN_MODE){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
   }
 
   function onSignals(path,data){
@@ -986,16 +1040,23 @@ async function startApp(initialName) {
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,v])=>proc(uid,v));}
     else proc(path.slice(1),data);
     renderList();
-    if(!talking){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
+    if(!talking || OPEN_MODE){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
   });
 
   tbtn.disabled=false;
+  if (OPEN_MODE) {
+    tbtn.style.display = 'none'; // В OPEN_MODE кнопка Talk не нужна
+    $('m-hint').textContent = 'Ты в эфире — все слышат тебя';
+    // В debug-режиме gesture уже выдан — стартуем микрофон сразу
+    if (gestureReady) openModeStart();
+  } else {
+    $('m-hint').textContent = 'Удерживай кнопку чтобы говорить';
+  }
   renderList();
   setStatus('Подключение...');
 
-  const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы начать говорить' : 'Удерживай кнопку чтобы говорить';
-  const HINT_TALK = OPEN_MODE ? 'Нажми чтобы замолчать'       : 'Отпусти, чтобы замолчать';
-  $('m-hint').textContent = HINT_IDLE;
+  const HINT_IDLE = OPEN_MODE ? '' : 'Удерживай кнопку чтобы говорить';
+  const HINT_TALK = OPEN_MODE ? '' : 'Отпусти, чтобы замолчать';
 
   // ── PTT / Open-mode ──────────────────────────────────────────────────────
   async function startTalk() {
@@ -1046,9 +1107,8 @@ async function startApp(initialName) {
     fbDel(room,'talking/'+myUid); setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
   }
 
-  if (OPEN_MODE) {
-    tbtn.addEventListener('click', e => { e.preventDefault(); if (talking) stopTalk(); else startTalk(); });
-  } else {
+  if (!OPEN_MODE) {
+    // PTT: только в не-open режиме
     tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
     tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
     tbtn.addEventListener('mouseup',    stopTalk);
@@ -1061,6 +1121,8 @@ async function startApp(initialName) {
     muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
     document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
     Object.values(peerNodes).forEach(gain=>{ if(gain) gain.gain.value = muted ? 0 : VOLUME; });
+    // В OPEN_MODE мьютим/размьютим и исходящий трек
+    if (OPEN_MODE && localStream) localStream.getAudioTracks().forEach(t => t.enabled = !muted);
     toast(muted?'Звук выключен':'Звук включён');
   });
 }
