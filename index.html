@@ -859,7 +859,16 @@ async function startApp(initialName) {
   // ── Presence ─────────────────────────────────────────────────────────────
   presence[myUid] = {name:currentMyName, speaking:false};
   dbg('registered', 'uid='+myUid.slice(0,6)+' room='+room);
-  fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
+  fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START}).then(()=>{
+    // Firebase точно доступен сразу после успешного PUT — читаем users и signals немедленно
+    dbg('registered-ok', 'bootstrap fetch');
+    fetch(fbUrl(room,'users')).then(r=>r.json()).then(data=>{
+      if(data){ dbg('bootstrap-users', Object.keys(data).length+''); onUsers('/',data); }
+    }).catch(()=>{});
+    fetch(fbUrl(room,'signals/'+myUid)).then(r=>r.json()).then(data=>{
+      if(data){ dbg('bootstrap-signals', ''); onSignals('/',data); }
+    }).catch(()=>{});
+  }).catch(()=>{});
 
   function onLeave() {
     fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
@@ -905,7 +914,8 @@ async function startApp(initialName) {
   // ── Слушатели Firebase ────────────────────────────────────────────────────
   const peerSids = {};
 
-  fbListen(room,'users',(path,data)=>{
+  // Именованные колбэки — используются и в fbListen, и в bootstrap-фетче
+  function onUsers(path,data){
     const proc=(uid,d)=>{
       if(uid===myUid)return;
       if(!d || !d.name){
@@ -959,13 +969,17 @@ async function startApp(initialName) {
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,d])=>proc(uid,d));}
     else proc(path.slice(1),data);
     renderList();
-  },{pollMs:15000}); // polling-фоллбэк для users если SSE умерла (iOS-проблема)
+    if(!talking){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
+  }
 
-  fbListen(room,'signals/'+myUid,(path,data)=>{
+  function onSignals(path,data){
     const proc=(fromUid,sig)=>{ if(!sig)return; if(sig.type==='offer')handleOffer(fromUid,sig); if(sig.type==='answer')handleAnswer(fromUid,sig); };
     if(path==='/'){if(data)Object.entries(data).forEach(([uid,s])=>proc(uid,s));}
     else proc(path.slice(1),data);
-  },{pollMs:10000}); // polling-фоллбэк для signals если SSE умерла
+  }
+
+  fbListen(room,'users', onUsers, {pollMs:15000}); // polling-фоллбэк для users если SSE умерла (iOS-проблема)
+  fbListen(room,'signals/'+myUid, onSignals, {pollMs:10000}); // polling-фоллбэк для signals если SSE умерла
 
   fbListen(room,'talking',(path,data)=>{
     const proc=(uid,val)=>{ if(uid===myUid)return; if(presence[uid])presence[uid].speaking=!!val; };
@@ -977,7 +991,7 @@ async function startApp(initialName) {
 
   tbtn.disabled=false;
   renderList();
-  setStatus('Онлайн: 1 чел.');
+  setStatus('Подключение...');
 
   const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы начать говорить' : 'Удерживай кнопку чтобы говорить';
   const HINT_TALK = OPEN_MODE ? 'Нажми чтобы замолчать'       : 'Отпусти, чтобы замолчать';
