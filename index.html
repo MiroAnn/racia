@@ -547,6 +547,9 @@ async function startApp(initialName) {
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
     doHeartbeat();
+    // Повторный heartbeat через 3с — даём время SSE переподключиться
+    // Это разбудит offer-failsafe у оферрора, даже если наш первый heartbeat пришёл пока его SSE была мертва
+    setTimeout(doHeartbeat, 3000);
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
     if (localStream) {
       const track = localStream.getAudioTracks()[0];
@@ -564,6 +567,20 @@ async function startApp(initialName) {
           await pc.setLocalDescription(offer);
           fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
         } catch(e) {}
+      }
+    }
+    // Оферрор: если есть пир в presence без соединения — сразу переотправляем оффер
+    // (покрывает кейс когда телефон спал и пропустил все офферы)
+    if (gestureReady) {
+      for (const uid of Object.keys(presence)) {
+        if (uid === myUid || myUid >= uid) continue;
+        const peer = peers[uid];
+        const state = peer ? peer.pc.iceConnectionState : 'none';
+        if (state !== 'connected' && state !== 'completed' && state !== 'checking') {
+          dbg('visibility→sendOffer', uid.slice(0,6)+' was='+state);
+          if (peer) dropPeer(uid);
+          sendOffer(uid);
+        }
       }
     }
   });
@@ -752,7 +769,7 @@ async function startApp(initialName) {
   }
 
   async function handleOffer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('offer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 90000 || data.ts < SESSION_START - 5000)) { dbg('offer-ignored stale age='+Math.round((Date.now()-data.ts)/1000)+'s', remoteUid.slice(0,6)); return; }
     // Строгое разделение ролей: кто с меньшим UID — всегда offerer, никогда не принимает чужие offer.
     // Это предотвращает сброс DTLS-рукопожатия когда другая сторона присылает offer одновременно.
     if (myUid < remoteUid) {
@@ -788,7 +805,7 @@ async function startApp(initialName) {
   }
 
   async function handleAnswer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 60000 || data.ts < SESSION_START - 30000)) { dbg('answer-ignored stale', remoteUid.slice(0,6)); return; }
+    if (data.ts && (Date.now() - data.ts > 90000 || data.ts < SESSION_START - 5000)) { dbg('answer-ignored stale age='+Math.round((Date.now()-data.ts)/1000)+'s', remoteUid.slice(0,6)); return; }
     dbg('handleAnswer←', remoteUid.slice(0,6));
     const p = peers[remoteUid];
     if(!p || p.pc.signalingState==='stable') return;
