@@ -448,12 +448,17 @@ async function startApp(localStream) {
     return Object.entries(presence).some(([uid, p]) => uid !== myUid && p.speaking);
   }
 
-  // True if we have remote peers but none has an active WebRTC connection yet
+  // True if we have remote peers but none has an active WebRTC connection yet.
+  // Checks both connectionState AND iceConnectionState — iOS Chrome never fires
+  // onconnectionstatechange→'connected' but iceConnectionState works correctly.
   function isConnecting() {
     const hasPeers = Object.keys(presence).some(uid => uid !== myUid);
     if (!hasPeers) return false;
-    const hasConnected = Object.values(peers).some(
-      ({pc}) => pc.connectionState === 'connected'
+    const hasConnected = Object.values(peers).some(({pc}) =>
+      pc.connectionState === 'connected' ||
+      pc.connectionState === 'completed' ||
+      pc.iceConnectionState === 'connected' ||
+      pc.iceConnectionState === 'completed'
     );
     return !hasConnected;
   }
@@ -580,7 +585,16 @@ async function startApp(localStream) {
       fbPut(room, 'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
     };
 
-    pc.oniceconnectionstatechange = () => dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
+    pc.oniceconnectionstatechange = () => {
+      dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        updateTalkBtn();
+        const audio = $('audio-'+remoteUid);
+        if (audio && audio.srcObject && audio.paused) {
+          audio.play().catch(e => dbg('ice-audio-retry-err', remoteUid.slice(0,6)+' '+String(e)));
+        }
+      }
+    };
 
     pc.onconnectionstatechange = async () => {
       dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
