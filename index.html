@@ -3,144 +3,187 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>🏔️ Поболтушки</title>
+  <title>📻 Рация</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root { --bg:#0d0d1a; --card:#161628; --green:#00d46a; --red:#ff3b30; --blue:#4a9eff; --text:#fff; --muted:#6b7280; }
-    html { height: 100%; }
-    body {
-      background: var(--bg); color: var(--text);
+    :root {
+      --bg: #0d0d1a; --card: #161628; --green: #00d46a;
+      --red: #ff3b30; --blue: #4a9eff; --text: #fff; --muted: #6b7280;
+    }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+      overflow: hidden; user-select: none; -webkit-user-select: none;
     }
 
-    /* ── Главный экран ── */
+    /* ── App shell ── */
     #app {
-      position: fixed; inset: 0;   /* надёжно заполняет всё окно на desktop и mobile */
-      display: flex; flex-direction: column; align-items: center;
-      justify-content: space-between;
-      padding: 16px 18px 20px;
-      padding-bottom: max(20px, env(safe-area-inset-bottom));
-      overflow: hidden;
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      padding: 8px 8px 0 8px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+      gap: 8px;
     }
 
-    /* Шапка */
-    .hd { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-    .hd-left { display: flex; flex-direction: column; gap: 5px; }
-    .hd-logo-title { display: flex; align-items: center; gap: 6px; }
-    .hd-logo { font-size: 1.2rem; line-height: 1; }
-    .hd-title { font-size: .95rem; font-weight: 700; }
-    .hd-room { display: flex; align-items: center; gap: 7px; }
-    .hd-rlbl { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
-    .hd-rbadge { background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24); color: var(--blue); font-size: .75rem; font-weight: 700; letter-spacing: .1em; padding: 2px 10px; border-radius: 20px; cursor: pointer; }
-    .hd-chint { font-size: .64rem; color: var(--muted); margin-top: 1px; opacity: 0; transition: opacity .3s; height: .75em; }
+    /* ── Header ── */
+    .hd {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0; height: 34px;
+    }
+    .hd-left  { display: flex; align-items: center; gap: 7px; }
+    .hd-logo  { font-size: 1.15rem; line-height: 1; }
+    .hd-title { font-size: .92rem; font-weight: 700; cursor: default; }
+    .hd-room  {
+      background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24);
+      color: var(--blue); font-size: .72rem; font-weight: 700;
+      letter-spacing: .1em; padding: 2px 10px; border-radius: 20px; cursor: pointer;
+      transition: background .15s;
+    }
+    .hd-room:active { background: rgba(74,158,255,.2); }
+    .hd-chint { font-size: .64rem; color: var(--green); opacity: 0; transition: opacity .3s; margin-left: 4px; }
     .hd-chint.on { opacity: 1; }
 
-    /* Участники */
-    .plist { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 5px; }
-    .pi { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 10px; padding: 8px 12px; border: 1.5px solid transparent; transition: border-color .2s, background .2s; min-height: 38px; }
-    .pi.speaking { background: rgba(255,59,48,.06); border-color: rgba(255,59,48,.2); }
-    .pi.me-row { cursor: pointer; }
-    .pi.me-row:active { background: rgba(74,158,255,.08); }
-    .pd { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; transition: background .25s, transform .2s, box-shadow .25s; }
-    .pd.me { background: var(--green); box-shadow: 0 0 7px rgba(0,212,106,.5); }
-    .pd.online { background: var(--blue); box-shadow: 0 0 6px rgba(74,158,255,.4); }
-    .pd.speaking { background: var(--red); transform: scale(1.4); box-shadow: 0 0 9px rgba(255,59,48,.6); animation: blink .75s infinite; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
-    .pname { font-size: .88rem; font-weight: 600; flex: 1; }
-    .ptag { font-size: .66rem; color: var(--muted); white-space: nowrap; }
-    .pspk { font-size: .66rem; color: var(--red); white-space: nowrap; }
-
-    /* Инлайн-редактирование имени */
-    .pi.editing { border-color: rgba(74,158,255,.35); background: rgba(74,158,255,.06); }
-    .pname-input {
-      flex: 1; background: transparent; border: none; outline: none;
-      color: var(--text); font-size: .88rem; font-weight: 600;
-      font-family: inherit; padding: 0; min-width: 0;
-      touch-action: auto; user-select: text; -webkit-user-select: text;
+    /* ── Participant list ── */
+    #peer-list {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+      padding-bottom: 4px; min-height: 0;
     }
-    .pname-input::placeholder { color: var(--muted); }
-    .save-btn { background: var(--green); border: none; border-radius: 7px; color: #000; font-size: .75rem; font-weight: 700; padding: 4px 9px; cursor: pointer; flex-shrink: 0; }
+    #peer-list::-webkit-scrollbar { width: 0; }
 
-    .stline { font-size: .76rem; color: var(--muted); text-align: center; margin-top: 3px; }
-    .stline.tx { color: var(--red); font-weight: 600; }
+    .peer-card {
+      background: var(--card); border-radius: 14px;
+      border: 2px solid transparent; padding: 12px 14px;
+      display: flex; align-items: center; gap: 12px;
+      transition: border-color .2s, background .2s;
+    }
+    .peer-card.speaking {
+      border-color: rgba(0,212,106,.65);
+      background: rgba(0,212,106,.07);
+    }
 
-    /* TALK */
-    .tw { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .peer-avatar {
+      width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
+      background: rgba(74,158,255,.18); border: 2px solid rgba(74,158,255,.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.05rem; font-weight: 700; color: var(--blue);
+      text-transform: uppercase; transition: background .2s, border-color .2s, color .2s;
+    }
+    .peer-card.speaking .peer-avatar {
+      background: rgba(0,212,106,.2); border-color: rgba(0,212,106,.55); color: var(--green);
+    }
+
+    .peer-info { flex: 1; min-width: 0; }
+    .peer-name { font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .peer-status { font-size: .72rem; color: var(--green); margin-top: 2px; }
+    .me-tag { font-size: .65rem; color: var(--muted); font-weight: 400; margin-left: 5px; }
+
+    .peer-wave {
+      font-size: 1.3rem; flex-shrink: 0;
+      animation: wave-bounce .5s ease-in-out infinite alternate;
+    }
+    @keyframes wave-bounce {
+      from { transform: scale(.88) rotate(-6deg); }
+      to   { transform: scale(1.12) rotate(6deg); }
+    }
+
+    /* ── Hint ── */
+    #m-hint {
+      text-align: center; font-size: .76rem; color: var(--muted);
+      flex-shrink: 0; min-height: 18px; transition: color .2s;
+    }
+    #m-hint.active { color: var(--green); }
+    #m-hint.locked { color: var(--red); }
+
+    /* ── Talk button ── */
+    #talk-area {
+      display: flex; flex-direction: column; align-items: center;
+      flex-shrink: 0; padding-bottom: 14px;
+    }
+
     #tbtn {
-      width: 168px; height: 168px; border-radius: 50%;
-      border: none; outline: none; cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-      background: radial-gradient(circle at 38% 35%, #00e87a, #00a84f);
-      box-shadow: 0 0 0 9px rgba(0,212,106,.07),0 0 0 18px rgba(0,212,106,.03),0 9px 30px rgba(0,212,106,.35),inset 0 2px 0 rgba(255,255,255,.18),inset 0 -3px 7px rgba(0,0,0,.25);
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-      transition: transform .08s, box-shadow .08s, background .1s;
+      width: 132px; height: 132px; border-radius: 50%;
+      background: radial-gradient(circle at 38% 35%, #00d46a, #009e50);
+      box-shadow: 0 0 0 12px rgba(0,212,106,.08), 0 8px 32px rgba(0,212,106,.35),
+                  inset 0 2px 0 rgba(255,255,255,.2);
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 5px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: transform .08s, box-shadow .12s, background .15s, opacity .2s;
+      touch-action: none;
     }
-    #tbtn:disabled { background: radial-gradient(circle at 38% 35%, #222238, #161628); box-shadow: 0 5px 18px rgba(0,0,0,.4); cursor: not-allowed; }
-    #tbtn.pressing { background: radial-gradient(circle at 38% 35%, #ff5f55, #cc2e24); box-shadow: 0 0 0 9px rgba(255,59,48,.1),0 0 0 18px rgba(255,59,48,.04),0 7px 26px rgba(255,59,48,.5),inset 0 2px 0 rgba(255,255,255,.12),inset 0 -3px 7px rgba(0,0,0,.3); transform: scale(.95); }
-    .bicon { font-size: 1.9rem; pointer-events: none; }
-    .blbl { font-size: .92rem; font-weight: 800; letter-spacing: .18em; color: rgba(255,255,255,.95); pointer-events: none; }
+    #tbtn .btn-icon { font-size: 2rem; line-height: 1; pointer-events: none; }
+    #tbtn .btn-lbl  { font-size: .75rem; font-weight: 800; letter-spacing: .14em; pointer-events: none; }
 
-    .thint { color: var(--muted); font-size: .73rem; text-align: center; }
+    #tbtn.pressing {
+      transform: scale(.93);
+      background: radial-gradient(circle at 38% 35%, #00ff82, #00c060);
+      box-shadow: 0 0 0 18px rgba(0,212,106,.18), 0 4px 22px rgba(0,212,106,.55),
+                  inset 0 2px 0 rgba(255,255,255,.25);
+    }
+    #tbtn.locked {
+      background: radial-gradient(circle at 38% 35%, #555, #2e2e2e);
+      box-shadow: 0 0 0 10px rgba(100,100,100,.05), 0 4px 14px rgba(0,0,0,.25);
+      opacity: .55; cursor: not-allowed;
+    }
 
-    /* Mute */
-    #mbtn { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: 2px solid #1f1f38; background: var(--card); color: #fff; font-size: 1.3rem; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
-    #mbtn.muted { border-color: var(--red); background: rgba(255,59,48,.12); }
+    /* ── Splash ── */
+    #splash {
+      position: fixed; inset: 0; z-index: 3000; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 10px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: opacity .35s ease; user-select: none; -webkit-user-select: none;
+    }
+    #splash.out { opacity: 0; pointer-events: none; }
+    .sp-logo  { font-size: 3rem; line-height: 1; }
+    .sp-title { font-size: 1.5rem; font-weight: 800; }
+    .sp-room-lbl   { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; margin-top: 8px; }
+    .sp-room-badge {
+      background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24);
+      color: var(--blue); font-size: .85rem; font-weight: 700;
+      letter-spacing: .1em; padding: 3px 14px; border-radius: 20px;
+    }
+    .sp-btn {
+      margin-top: 24px; width: 148px; height: 148px; border-radius: 50%; border: none;
+      background: radial-gradient(circle at 38% 35%, #00d46a, #009e50);
+      box-shadow: 0 0 0 10px rgba(0,212,106,.08), 0 8px 32px rgba(0,212,106,.38),
+                  inset 0 2px 0 rgba(255,255,255,.2);
+      color: #fff; font-size: .95rem; font-weight: 800; letter-spacing: .14em;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 6px; pointer-events: none;
+      transition: transform .08s, box-shadow .08s;
+    }
+    #splash:active .sp-btn {
+      transform: scale(.93);
+      box-shadow: 0 0 0 10px rgba(0,212,106,.12), 0 4px 20px rgba(0,212,106,.3),
+                  inset 0 2px 0 rgba(255,255,255,.15);
+    }
+    .sp-hint { color: var(--muted); font-size: .72rem; margin-top: 10px; }
 
-    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); background: rgba(255,255,255,.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1); color: #fff; padding: 8px 16px; border-radius: 18px; font-size: .8rem; transition: transform .3s; pointer-events: none; white-space: nowrap; }
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 90px; left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: rgba(255,255,255,.12); backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1);
+      color: #fff; padding: 8px 16px; border-radius: 18px;
+      font-size: .8rem; transition: transform .3s;
+      pointer-events: none; white-space: nowrap; z-index: 5000;
+    }
     #toast.show { transform: translateX(-50%) translateY(0); }
 
-    /* ── Сплэш-экран ── */
-    #splash {
-      position:fixed; inset:0; z-index:3000;
-      background:var(--bg);
-      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
-      cursor:pointer; -webkit-tap-highlight-color:transparent;
-      transition:opacity .35s ease;
-      user-select:none; -webkit-user-select:none;
-    }
-    #splash.out { opacity:0; pointer-events:none; }
-    .sp-logo { font-size:3rem; line-height:1; }
-    .sp-title { font-size:1.5rem; font-weight:800; letter-spacing:.02em; }
-    .sp-room-lbl { color:var(--muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.1em; margin-top:8px; }
-    .sp-room-badge { background:rgba(74,158,255,.1); border:1px solid rgba(74,158,255,.24); color:var(--blue); font-size:.85rem; font-weight:700; letter-spacing:.1em; padding:3px 14px; border-radius:20px; }
-    .sp-btn {
-      margin-top:24px; width:148px; height:148px; border-radius:50%; border:none;
-      background:radial-gradient(circle at 38% 35%,#4a9eff,#1a6fd4);
-      box-shadow:0 0 0 10px rgba(74,158,255,.08),0 8px 32px rgba(74,158,255,.4),inset 0 2px 0 rgba(255,255,255,.2);
-      color:#fff; font-size:.95rem; font-weight:800; letter-spacing:.14em;
-      display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px;
-      pointer-events:none; transition:transform .08s, box-shadow .08s;
-    }
-    #splash:active .sp-btn { transform:scale(.93); box-shadow:0 0 0 10px rgba(74,158,255,.12),0 4px 20px rgba(74,158,255,.3),inset 0 2px 0 rgba(255,255,255,.15); }
-    .sp-hint { color:var(--muted); font-size:.72rem; margin-top:10px; }
-
-    /* ── Debug panel ── */
-    #dbg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:999; flex-direction:column; font-family:monospace; font-size:11px; color:#ccc; }
-    #dbg.on { display:flex; }
-    #dbg-head { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #222; flex-shrink:0; }
-    #dbg-head span { color:#fff; font-size:13px; font-weight:700; }
-    #dbg-close, #dbg-copy, #dbg-clear { background:none; border:1px solid #444; color:#aaa; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:11px; }
-    #dbg-copy:active { background:#1a3a1a; color:#0f0; }
-    #dbg-clear:active { background:#3a1a1a; color:#f00; }
-    #dbg-body { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:10px; }
-    .dbg-peer { background:#111; border-radius:8px; padding:8px 10px; border-left:3px solid #333; }
-    .dbg-peer.ice-connected { border-left-color:#00d46a; }
-    .dbg-peer.ice-checking  { border-left-color:#f59e0b; }
-    .dbg-peer.ice-failed    { border-left-color:#ff3b30; }
-    .dbg-peer.ice-new       { border-left-color:#4a9eff; }
-    .dbg-pname { color:#fff; font-weight:700; margin-bottom:4px; }
-    .dbg-row   { display:flex; gap:6px; margin-top:2px; }
-    .dbg-lbl   { color:#555; min-width:60px; }
-    .dbg-val   { color:#aaa; }
-    .dbg-val.ok  { color:#00d46a; }
-    .dbg-val.bad { color:#ff3b30; }
-    .dbg-val.mid { color:#f59e0b; }
-    #dbg-log { background:#0a0a14; border-radius:8px; padding:8px 10px; flex:1; overflow-y:auto; min-height:120px; }
-    .dbg-entry { padding:2px 0; border-bottom:1px solid #111; }
-    .dbg-entry .t { color:#444; margin-right:6px; }
-    .dbg-entry .ev { color:#7dd3fc; }
-    .dbg-entry .detail { color:#6b7280; }
+    /* ── Debug ── */
+    #dbg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 9999; flex-direction: column; font-family: monospace; font-size: 11px; color: #ccc; }
+    #dbg.on { display: flex; }
+    #dbg-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #222; flex-shrink: 0; }
+    #dbg-head span { color: #fff; font-size: 13px; font-weight: 700; }
+    #dbg-close, #dbg-copy, #dbg-clear { background: none; border: 1px solid #444; color: #aaa; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
+    #dbg-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+    #dbg-log  { background: #0a0a14; border-radius: 8px; padding: 8px 10px; }
+    .dbg-entry { padding: 2px 0; border-bottom: 1px solid #111; }
+    .dbg-entry .t      { color: #444; margin-right: 5px; }
+    .dbg-entry .ev     { color: #7dd3fc; }
+    .dbg-entry .detail { color: #6b7280; }
   </style>
 </head>
 <body>
@@ -148,39 +191,38 @@
 <div id="app">
   <div class="hd">
     <div class="hd-left">
-      <div class="hd-logo-title">
-        <div class="hd-logo">🏔️</div>
-        <div class="hd-title">Поболтушки</div>
+      <div class="hd-logo">📻</div>
+      <div class="hd-title">Рация</div>
+      <div style="display:flex;align-items:center;gap:5px;">
+        <span style="color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;">Комната</span>
+        <span class="hd-room" id="m-room">—</span>
+        <span class="hd-chint" id="m-chint">✓ скопировано</span>
       </div>
-      <div class="hd-room">
-        <span class="hd-rlbl">Комната</span>
-        <span class="hd-rbadge" id="m-room">—</span>
-      </div>
-      <div class="hd-chint" id="m-chint">✓ Ссылка скопирована</div>
     </div>
-    <button id="mbtn">🔊</button>
+    <div id="peer-count" style="font-size:.72rem;color:var(--muted);"></div>
   </div>
 
-  <div style="width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:6px;">
-    <div class="plist" id="m-plist"></div>
-    <div class="stline" id="m-st">Подключение…</div>
-  </div>
+  <div id="peer-list"></div>
 
-  <div class="tw">
-    <button id="tbtn" disabled><div class="bicon">🎙️</div><div class="blbl">TALK</div></button>
-    <div class="thint" id="m-hint">Удерживай кнопку чтобы говорить</div>
+  <div id="m-hint">Зажми кнопку чтобы говорить</div>
+
+  <div id="talk-area">
+    <div id="tbtn">
+      <span class="btn-icon">🎙</span>
+      <span class="btn-lbl">TALK</span>
+    </div>
   </div>
 </div>
 
 <div id="toast"></div>
 
 <div id="splash">
-  <div class="sp-logo">🏔️</div>
-  <div class="sp-title">Поболтушки</div>
+  <div class="sp-logo">📻</div>
+  <div class="sp-title">Рация</div>
   <div class="sp-room-lbl">Комната</div>
   <div class="sp-room-badge" id="sp-room">—</div>
   <div class="sp-btn">
-    <span style="font-size:1.9rem">🎙️</span>
+    <span style="font-size:1.9rem">📻</span>
     <span>ВОЙТИ</span>
   </div>
   <div class="sp-hint">Нажми чтобы войти</div>
@@ -195,23 +237,17 @@
       <button id="dbg-close">Закрыть</button>
     </div>
   </div>
-  <div id="dbg-body">
-    <div id="dbg-peers"></div>
-    <div id="dbg-log"></div>
-  </div>
+  <div id="dbg-body"><div id="dbg-log"></div></div>
 </div>
 
 <script>
-// ── Конфиг ───────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────────
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
 const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'turn:a.relay.metered.ca:80',
-    username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
-  { urls: 'turn:a.relay.metered.ca:443?transport=tcp',
-    username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
-  { urls: 'turns:a.relay.metered.ca:443',
-    username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turn:a.relay.metered.ca:80',               username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turn:a.relay.metered.ca:443?transport=tcp', username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turns:a.relay.metered.ca:443',              username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
 ];
 let ICE_SERVERS = ICE_FALLBACK;
 async function loadIceServers() {
@@ -223,910 +259,511 @@ async function loadIceServers() {
 }
 loadIceServers();
 
-// ── Смешные имена ─────────────────────────────────────────────────────────────
+// ── Funny names ───────────────────────────────────────────────────────────────
 const ADJ  = ['Быстрый','Лихой','Дерзкий','Крутой','Смелый','Дикий','Хитрый','Ловкий','Шустрый','Удалой','Бравый','Лютый','Сонный','Хмурый','Весёлый','Мощный','Пушистый','Звонкий','Ярый','Хрустящий'];
 const NOUN = ['Бобёр','Лось','Медведь','Заяц','Волк','Лиса','Бурундук','Сурок','Орёл','Сова','Ёж','Кабан','Рысь','Соболь','Снегирь','Зубр','Барсук','Суслик','Хомяк','Глухарь'];
-function funnyName() { return ADJ[Math.random()*ADJ.length|0] + ' ' + NOUN[Math.random()*NOUN.length|0]; }
+function funnyName() { return ADJ[Math.random()*ADJ.length|0]+' '+NOUN[Math.random()*NOUN.length|0]; }
 
-// ── Утилиты ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-function toast(msg) { const el=$('toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2200); }
+function toast(msg, dur=2500) {
+  const el=$('toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'), dur);
+}
 
-function fbUrl(room,path) { return DB+'/rooms/'+room+'/'+path+'.json'; }
-function fbPut(room,path,val) { return fetch(fbUrl(room,path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)}); }
-function fbDel(room,path)    { return fetch(fbUrl(room,path),{method:'DELETE'}); }
-function fbListen(room,path,cb,{pollMs=0}={}) {
-  const isSignals = path.startsWith('signals/');
-  let es, reconnTimer, pollTimer, sseOk = false;
+function fbUrl(room,path) { return `${DB}/rooms/${room}/${path}.json`; }
+function fbPut(room,path,val)  { return fetch(fbUrl(room,path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)}); }
+function fbDel(room,path)      { return fetch(fbUrl(room,path),{method:'DELETE'}); }
+function fbGet(room,path)      { return fetch(fbUrl(room,path)).then(r=>r.json()).catch(()=>null); }
+
+function fbListen(room, path, cb, opts={}) {
+  const {pollMs=0} = opts;
+  let es, reconnTimer, pollTimer;
   function connect() {
     if (es) { try{es.close();}catch(_){} }
     clearTimeout(reconnTimer);
-    sseOk = false;
-    es = new EventSource(fbUrl(room,path)); // без ?stream=true — Firebase стримит по Accept: text/event-stream
-    es.addEventListener('put', e => {
-      sseOk = true;
-      const d=JSON.parse(e.data);
-      if(path==='users') dbg('SSE-users put', 'path='+d.path+' data='+(d.data?JSON.stringify(d.data).slice(0,60):'null'));
-      if(isSignals && d.data) {
-        const inner = d.path==='/' ? Object.values(d.data)[0] : d.data;
-        dbg('SSE-signal put', 'path='+d.path+' type='+(inner&&inner.type||'?'));
-      }
-      cb(d.path,d.data);
-    });
-    es.addEventListener('error', ()=> {
-      dbg('SSE-error', path.slice(0,20));
-      // Переподключаемся через 2с — не ждём медленный браузерный backoff
-      reconnTimer = setTimeout(connect, 2000);
-      // Мгновенный fetch-фоллбэк: SSE-error и registered часто совпадают —
-      // значит Firebase в этот момент уже доступен
-      if (pollMs > 0) {
-        fetch(fbUrl(room,path))
-          .then(r=>r.json())
-          .then(data=>{ if(data!==null){ dbg('poll-on-error', path.slice(0,20)); cb('/',data); } })
-          .catch(()=>{});
-      }
-    });
-    es.addEventListener('open',  ()=> { sseOk = true; dbg('SSE-open',  path.slice(0,20)); });
-  }
-  // Polling-фоллбэк: если SSE не работает — делаем обычный GET каждые pollMs мс
-  function poll() {
-    if (pollMs <= 0) return;
-    if (!sseOk) {
-      fetch(fbUrl(room,path))
-        .then(r=>r.json())
-        .then(data=>{ dbg('poll-fallback', path.slice(0,20)); cb('/',data); })
-        .catch(()=>{});
-    }
-    pollTimer = setTimeout(poll, pollMs);
+    es = new EventSource(fbUrl(room,path)+'?stream=true');
+    es.addEventListener('put',   e => { const d=JSON.parse(e.data); cb(d.path,d.data); });
+    es.addEventListener('error', () => { reconnTimer=setTimeout(connect,2000); });
+    es.addEventListener('open',  () => dbg('SSE-open', path.slice(0,24)));
   }
   connect();
-  if (pollMs > 0) setTimeout(poll, pollMs); // первый poll через pollMs
-  return { close: ()=>{ clearTimeout(reconnTimer); clearTimeout(pollTimer); if(es) es.close(); } };
+  if (pollMs) {
+    pollTimer = setInterval(() => {
+      fbGet(room, path).then(data => { if (data !== null) cb('/', data); }).catch(()=>{});
+    }, pollMs);
+  }
+  return { close: () => { clearTimeout(reconnTimer); clearInterval(pollTimer); if(es) es.close(); } };
 }
 
-// ── Комната и режим ──────────────────────────────────────────────────────────
+// ── Room ──────────────────────────────────────────────────────────────────────
 const P = new URLSearchParams(window.location.search);
 let room = P.get('room');
 if (!room) {
   room = Math.random().toString(36).slice(2,8).toUpperCase();
   const u = new URL(location.href); u.searchParams.set('room',room); history.replaceState({},'',u);
 }
-$('m-room').textContent = room;
+$('m-room').textContent  = room;
 $('sp-room').textContent = room;
 
-// Открытый режим: ?open=1 — кнопка-переключатель, не нужно удерживать
-const OPEN_MODE = P.get('open') === '1';
+$('m-room').addEventListener('click', () => {
+  navigator.clipboard.writeText(location.href).then(() => {
+    toast('Ссылка скопирована!');
+    $('m-chint').classList.add('on');
+    setTimeout(()=>$('m-chint').classList.remove('on'), 2200);
+  });
+});
 
-// ── Debug — объявляем ДО сплэша, чтобы не было TDZ-ошибки ───────────────────
+// ── Debug ─────────────────────────────────────────────────────────────────────
 const DEBUG_MODE = P.get('debug') === '1';
-// Загружаем предыдущий лог из sessionStorage (не теряется при обновлении страницы)
 let dbgLog = [];
-try {
-  const saved = sessionStorage.getItem('racia_dbglog');
-  if (saved) {
-    dbgLog = JSON.parse(saved);
-    dbgLog.unshift({sec:'---', event:'PAGE-RELOAD', detail: new Date().toLocaleTimeString()});
-  }
-} catch(_) {}
+try { const s=sessionStorage.getItem('racia_dbg'); if(s) dbgLog=JSON.parse(s); } catch(_){}
 const T0 = Date.now();
 function dbg(event, detail='') {
   const sec = ((Date.now()-T0)/1000).toFixed(1);
-  dbgLog.unshift({sec, event, detail});
-  if (dbgLog.length > 120) dbgLog.length = 120;
-  try { sessionStorage.setItem('racia_dbglog', JSON.stringify(dbgLog.slice(0,120))); } catch(_) {}
+  dbgLog.unshift({sec,event,detail});
+  if (dbgLog.length>150) dbgLog.length=150;
+  try { sessionStorage.setItem('racia_dbg', JSON.stringify(dbgLog.slice(0,150))); } catch(_){}
   if ($('dbg').classList.contains('on')) renderDbg();
 }
-
-// ── AudioContext на уровне модуля — разблокируется через тап на сплэше ───────
-let audioCtx = null;
-function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  return audioCtx;
-}
-
-// Глобальный хук: startApp заполняет его после инициализации
-window._tryPlayAll = null;
-
-// gestureReady: true после клика на splash (или сразу в debug-режиме).
-// Офферы не отправляются пока false — чтобы ontrack гарантированно приходил ПОСЛЕ gesture.
-let gestureReady = false;
-const pendingOfferUIDs = new Set(); // UIDs ожидающие sendOffer
-window._onGestureReady = null; // startApp заполняет после инициализации
-
-// ── Сплэш: тап разблокирует AudioContext до прихода любого звука ─────────────
-(function initSplash() {
-  const splash = $('splash');
-  function enterRoom() {
-    const ctx = getAudioCtx();
-    dbg('splash-enter', 'ctx='+ctx.state);
-    ctx.resume().then(() => {
-      dbg('ctx-resumed', ctx.state);
-      if (window._tryPlayAll) window._tryPlayAll();
-    }).catch(()=>{});
-    splash.classList.add('out');
-    setTimeout(() => { splash.style.display = 'none'; }, 380);
-    splash.removeEventListener('click',    enterRoom);
-    splash.removeEventListener('touchend', onTouch);
-    // Разблокируем отложенные офферы
-    gestureReady = true;
-    if (window._onGestureReady) window._onGestureReady();
-  }
-  function onTouch(e) { e.preventDefault(); enterRoom(); }
-  // В debug-режиме сплэш пропускается автоматически — gesture считается выданным сразу
-  if (DEBUG_MODE) {
-    gestureReady = true;
-    splash.style.display = 'none';
-    dbg('splash-auto-skip', 'debug mode');
-  } else {
-    splash.addEventListener('click',    enterRoom);
-    splash.addEventListener('touchend', onTouch);
-  }
-})();
-function iceClass(state) {
-  if (state==='connected'||state==='completed') return 'ice-connected';
-  if (state==='checking'||state==='new') return 'ice-checking';
-  if (state==='failed'||state==='disconnected'||state==='closed') return 'ice-failed';
-  return 'ice-new';
-}
-function valClass(v) {
-  if (!v || v==='null' || v==='ended' || v==='failed' || v==='disconnected' || v==='closed' || v==='recvonly' || v==='inactive') return 'bad';
-  if (v==='checking'||v==='new'||v==='have-local-offer'||v==='have-remote-offer') return 'mid';
-  return 'ok';
-}
 function renderDbg() {
-  const pc_el = $('dbg-peers');
-  const peerList = Object.entries(typeof peers!=='undefined'?peers:{});
-  pc_el.innerHTML = peerList.length ? '' : '<div style="color:#555;font-size:11px">Нет соединений</div>';
-  peerList.forEach(([uid, {pc}]) => {
-    const name = (typeof presence!=='undefined'&&presence[uid]) ? presence[uid].name : uid.slice(0,6);
-    const ice  = pc.iceConnectionState;
-    const conn = pc.connectionState;
-    const sig  = pc.signalingState;
-    const senders = pc.getSenders();
-    const recvs   = pc.getReceivers();
-    const sndTrack = senders[0]?.track;
-    const rcvTrack = recvs[0]?.track;
-    const sndInfo = sndTrack ? `${sndTrack.kind} ${sndTrack.readyState} en=${sndTrack.enabled}` : 'null';
-    const rcvInfo = rcvTrack ? `${rcvTrack.kind} ${rcvTrack.readyState}` : 'null';
-    const div = document.createElement('div');
-    div.className = 'dbg-peer '+iceClass(ice);
-    div.innerHTML = `<div class="dbg-pname">${name} <span style="color:#444;font-weight:normal">${uid.slice(0,6)}</span></div>
-      <div class="dbg-row"><span class="dbg-lbl">ICE:</span><span class="dbg-val ${valClass(ice)}">${ice}</span></div>
-      <div class="dbg-row"><span class="dbg-lbl">conn:</span><span class="dbg-val ${valClass(conn)}">${conn}</span></div>
-      <div class="dbg-row"><span class="dbg-lbl">signal:</span><span class="dbg-val ${valClass(sig)}">${sig}</span></div>
-      <div class="dbg-row"><span class="dbg-lbl">send:</span><span class="dbg-val ${valClass(sndInfo)}">${sndInfo}</span></div>
-      <div class="dbg-row"><span class="dbg-lbl">recv:</span><span class="dbg-val ${valClass(rcvInfo)}">${rcvInfo}</span></div>`;
-    pc_el.appendChild(div);
-  });
-  const log_el = $('dbg-log');
-  log_el.innerHTML = dbgLog.map(e=>`<div class="dbg-entry"><span class="t">${e.sec}s</span><span class="ev">${e.event}</span>${e.detail?' <span class="detail">'+e.detail+'</span>':''}</div>`).join('');
+  $('dbg-log').innerHTML = dbgLog.map(e =>
+    `<div class="dbg-entry"><span class="t">${e.sec}s</span><span class="ev">${e.event}</span>${e.detail?' <span class="detail">'+e.detail+'</span>':''}</div>`
+  ).join('');
 }
-
-if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg, 1000); }
+if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg,1000); }
 $('dbg-close').addEventListener('click', ()=>$('dbg').classList.remove('on'));
-$('dbg-clear').addEventListener('click', ()=>{ dbgLog.length=0; try{sessionStorage.removeItem('racia_dbglog');}catch(_){} renderDbg(); $('dbg-clear').textContent='✓ Сброшен'; setTimeout(()=>{ $('dbg-clear').textContent='Сброс'; },1500); });
+$('dbg-clear').addEventListener('click', ()=>{ dbgLog.length=0; try{sessionStorage.removeItem('racia_dbg');}catch(_){} renderDbg(); });
 $('dbg-copy').addEventListener('click', ()=>{
-  const peerLines = Object.entries(typeof peers!=='undefined'?peers:{}).map(([uid,{pc}])=>{
-    const s=pc.getSenders(); const r=pc.getReceivers();
-    return `  PEER ${uid.slice(0,6)}: ice=${pc.iceConnectionState} conn=${pc.connectionState} sig=${pc.signalingState}`
-      +`\n    send=${s.map(snd=>snd.track?snd.track.kind+'/'+snd.track.readyState+'/en='+snd.track.enabled:'null').join(',')}`
-      +`\n    recv=${r.map(rcv=>rcv.track?rcv.track.kind+'/'+rcv.track.readyState:'null').join(',')}`;
-  }).join('\n');
-  const logLines = dbgLog.map(e=>`${e.sec}s ${e.event} ${e.detail}`).join('\n');
-  const txt = '=== PEERS ===\n'+(peerLines||'none')+'\n\n=== LOG ===\n'+logLines;
-  navigator.clipboard.writeText(txt).then(()=>{ $('dbg-copy').textContent='✓ Скопировано!'; setTimeout(()=>{ $('dbg-copy').textContent='Копировать'; },2000); }).catch(()=>alert(txt));
+  navigator.clipboard.writeText(dbgLog.map(e=>`${e.sec}s ${e.event} ${e.detail}`).join('\n'))
+    .then(()=>toast('Лог скопирован'));
 });
 let tapCount=0, tapTimer=0;
 document.querySelector('.hd-title').addEventListener('click', ()=>{
-  tapCount++; clearTimeout(tapTimer);
-  tapTimer = setTimeout(()=>tapCount=0, 800);
+  tapCount++; clearTimeout(tapTimer); tapTimer=setTimeout(()=>tapCount=0,800);
   if (tapCount>=5) { tapCount=0; $('dbg').classList.toggle('on'); renderDbg(); setInterval(renderDbg,1000); }
 });
 
-function copyLink() {
-  navigator.clipboard.writeText(location.href).then(()=>{
-    toast('Ссылка скопирована!');
-    $('m-chint').classList.add('on');
-    setTimeout(()=>$('m-chint').classList.remove('on'),2200);
-  });
-}
-$('m-room').addEventListener('click', copyLink);
-
-// ── Имя из localStorage или генерируем ────────────────────────────────────────
+// ── Identity ──────────────────────────────────────────────────────────────────
 let myName = localStorage.getItem('racia_name') || funnyName();
 localStorage.setItem('racia_name', myName);
+const myUid = localStorage.getItem('racia_uid') || Math.random().toString(36).slice(2,10);
+localStorage.setItem('racia_uid', myUid);
 
-// ── Старт сразу ─────────────────────────────────────────────────────────────
-startApp(myName);
+// ── Splash ────────────────────────────────────────────────────────────────────
+(function() {
+  const splash = $('splash');
+  if (DEBUG_MODE) { splash.style.display='none'; setTimeout(enterRoom,100); return; }
+  function onEnter(e) {
+    if (e.type==='touchend') e.preventDefault();
+    splash.removeEventListener('click',    onEnter);
+    splash.removeEventListener('touchend', onEnter);
+    enterRoom();
+  }
+  splash.addEventListener('click',    onEnter);
+  splash.addEventListener('touchend', onEnter);
+})();
+
+// ── Entry ─────────────────────────────────────────────────────────────────────
+async function enterRoom() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      video: false
+    });
+    stream.getAudioTracks().forEach(t => t.enabled = false); // muted until PTT
+    dbg('media-ok','audio-only muted');
+  } catch(e) {
+    toast('Нет доступа к микрофону 😢');
+    dbg('media-err', String(e)); return;
+  }
+
+  const splash = $('splash');
+  splash.classList.add('out');
+  setTimeout(()=>{ splash.style.display='none'; }, 380);
+
+  startApp(stream);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
-async function startApp(initialName) {
-  const myUid = localStorage.getItem('racia_uid') || Math.random().toString(36).slice(2,10);
-  localStorage.setItem('racia_uid', myUid);
+async function startApp(localStream) {
+  const presence  = {};
+  const peers     = {};
+  const peerSids  = {};
+  const lastSeen  = {};
+  const SESSION_START = Date.now();
 
-  const presence = {}, peers = {};
-  let muted=false, talking=false, localStream=null;
-  let currentMyName = initialName;
-  let isEditing = false;
+  let talking = false;
 
-  const tbtn=$('tbtn'), mbtn=$('mbtn');
+  const tbtn = $('tbtn');
 
-  function setStatus(txt, isTx=false) { const el=$('m-st'); el.textContent=txt; el.classList.toggle('tx',isTx); }
-
-  // ── Рендер списка участников ─────────────────────────────────────────────
+  // ── Participant list ──────────────────────────────────────────────────────
   function renderList() {
-    if (isEditing) return;
-    const c=$('m-plist'); c.innerHTML='';
-    const sorted = [[myUid, presence[myUid]], ...Object.entries(presence).filter(([uid])=>uid!==myUid)];
-    sorted.forEach(([uid, p]) => {
-      if (!p || !p.name) return;
-      const { name, speaking } = p;
-      const isMe = uid === myUid;
-      const div = document.createElement('div');
-      div.className = 'pi' + (speaking?' speaking':'') + (isMe?' me-row':'');
-      const dot = document.createElement('div');
-      dot.className = 'pd '+(isMe?'me':speaking?'speaking':'online');
-      const nm = document.createElement('div'); nm.className='pname'; nm.textContent=name;
-      const tag = document.createElement('div');
-      if (isMe) { tag.className='ptag'; tag.textContent='ты ✏️'; }
-      else if (speaking) { tag.className='pspk'; tag.textContent='● говорит'; }
-      div.append(dot, nm, tag);
-      if (isMe) div.addEventListener('click', startEditing);
-      c.appendChild(div);
-    });
-    if (!talking || OPEN_MODE) setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
+    const list = $('peer-list');
+    const all = [
+      {uid: myUid, name: myName, speaking: talking, isMe: true},
+      ...Object.entries(presence)
+        .filter(([uid]) => uid !== myUid)
+        .map(([uid, p]) => ({uid, name: p.name, speaking: p.speaking, isMe: false}))
+    ];
+
+    list.innerHTML = all.map(({name, speaking, isMe}) => {
+      const letter = (name||'?').trim().charAt(0).toUpperCase();
+      return `<div class="peer-card${speaking?' speaking':''}">
+        <div class="peer-avatar">${letter}</div>
+        <div class="peer-info">
+          <div class="peer-name">${name}${isMe?'<span class="me-tag"> ты</span>':''}</div>
+          ${speaking?'<div class="peer-status">говорит…</div>':''}
+        </div>
+        ${speaking?'<div class="peer-wave">📣</div>':''}
+      </div>`;
+    }).join('');
+
+    const n = all.length;
+    $('peer-count').textContent = n > 1 ? `${n} чел.` : '';
   }
 
-  // ── Редактирование имени ─────────────────────────────────────────────────
-  function startEditing() {
-    if (isEditing) return;
-    isEditing = true;
-    const c = $('m-plist');
-    const rows = c.querySelectorAll('.pi');
-    const myRow = Array.from(rows).find(r => r.classList.contains('me-row'));
-    if (!myRow) return;
-    myRow.classList.add('editing');
-    myRow.removeEventListener('click', startEditing);
-    myRow.innerHTML = '';
-    const dot = document.createElement('div'); dot.className='pd me';
-    const input = document.createElement('input');
-    input.className='pname-input'; input.type='text';
-    input.value=currentMyName; input.maxLength=18;
-    input.placeholder='Твоё имя';
-    input.autocomplete='off'; input.autocorrect='off'; input.spellcheck=false;
-    const btn = document.createElement('button'); btn.className='save-btn'; btn.textContent='Готово';
-    const save = () => {
-      const newName = input.value.trim();
-      if (newName && newName !== currentMyName) {
-        currentMyName = newName; myName = newName;
-        localStorage.setItem('racia_name', newName);
-        if (presence[myUid]) presence[myUid].name = newName;
-        fbPut(room,'users/'+myUid+'/name', newName);
-      }
-      isEditing = false; renderList();
-    };
-    btn.addEventListener('click', save);
-    input.addEventListener('keydown', e => { if(e.key==='Enter'){input.blur();} if(e.key==='Escape'){isEditing=false;renderList();} });
-    input.addEventListener('blur', () => setTimeout(save, 200));
-    myRow.append(dot, input, btn);
-    setTimeout(() => { input.focus(); input.select(); }, 50);
+  // ── Talk button state ─────────────────────────────────────────────────────
+  function someoneElseTalking() {
+    return Object.entries(presence).some(([uid, p]) => uid !== myUid && p.speaking);
   }
 
-  // ── Кнопка разблокировки звука (появляется если play() заблокирован браузером) ──
-  let unlockBtnShown = false;
-  function showAudioUnlock() {
-    if (unlockBtnShown || document.getElementById('audio-unlock')) return;
-    unlockBtnShown = true;
-    const btn = document.createElement('div');
-    btn.id = 'audio-unlock';
-    btn.innerHTML = '🔊';
-    btn.title = 'Нажми чтобы включить звук';
-    btn.style.cssText = [
-      'position:fixed','bottom:108px','left:50%','transform:translateX(-50%)',
-      'z-index:4000','background:#ff3b30','color:#fff','font-size:1.6rem',
-      'width:60px','height:60px','border-radius:50%',
-      'display:flex','align-items:center','justify-content:center',
-      'cursor:pointer','box-shadow:0 4px 18px rgba(255,59,48,.55)',
-      'animation:unlockPulse 1.1s ease-in-out infinite',
-    ].join(';');
-    if (!document.getElementById('unlock-pulse-style')) {
-      const s = document.createElement('style');
-      s.id = 'unlock-pulse-style';
-      s.textContent = '@keyframes unlockPulse{0%,100%{transform:translateX(-50%) scale(1);opacity:1}50%{transform:translateX(-50%) scale(1.12);opacity:.85}}';
-      document.head.appendChild(s);
+  function updateTalkBtn() {
+    const locked = someoneElseTalking() && !talking;
+    tbtn.classList.toggle('pressing', talking);
+    tbtn.classList.toggle('locked',   locked);
+    const hint = $('m-hint');
+    if (talking) {
+      hint.textContent = 'Отпусти чтобы замолчать';
+      hint.className = 'active';
+    } else if (locked) {
+      hint.textContent = 'Эфир занят…';
+      hint.className = 'locked';
+    } else {
+      hint.textContent = 'Зажми кнопку чтобы говорить';
+      hint.className = '';
     }
-    document.body.appendChild(btn);
-    dbg('show-unlock-btn', '');
-    const doUnlock = (e) => {
-      if (e) e.preventDefault();
-      btn.remove(); unlockBtnShown = false;
-      dbg('unlock-btn-tap', '');
-      tryPlayAll();
-    };
-    btn.addEventListener('click',    doUnlock);
-    btn.addEventListener('touchend', doUnlock, {passive:false});
-  }
-  function hideAudioUnlock() {
-    const btn = document.getElementById('audio-unlock');
-    if (btn) { btn.remove(); unlockBtnShown = false; }
   }
 
-  // ── Микрофон ─────────────────────────────────────────────────────────────
-  async function acquireStream() {
-    if (localStream) return localStream;
-    localStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
-    localStream.getAudioTracks().forEach(t => {
-      t.enabled = false;
-      t.onended = () => {
-        localStream = null;
-        if (talking) { stopTalk(); toast(OPEN_MODE ? 'Микрофон отключился — нажми кнопку снова' : 'Микрофон отключился'); }
-      };
-    });
-    return localStream;
-  }
-
-  // ── Восстановление после возврата на вкладку ──────────────────────────────
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState !== 'visible') return;
-    doHeartbeat();
-    // Повторный heartbeat через 3с — даём время SSE переподключиться
-    // Это разбудит offer-failsafe у оферрора, даже если наш первый heartbeat пришёл пока его SSE была мертва
-    setTimeout(doHeartbeat, 3000);
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
-    if (localStream) {
-      const track = localStream.getAudioTracks()[0];
-      if (!track || track.readyState === 'ended') {
-        localStream = null;
-        if (talking) { stopTalk(); toast(OPEN_MODE ? 'Нажми кнопку — микрофон отключился' : 'Микрофон отключился'); }
-      } else if (talking && track.readyState === 'live') {
-        track.enabled = true;
-      }
-    }
-    for (const [remoteUid, {pc}] of Object.entries(peers)) {
-      if ((pc.connectionState === 'failed' || pc.connectionState === 'disconnected') && pc.signalingState === 'stable') {
-        try {
-          const offer = await pc.createOffer({iceRestart:true});
-          await pc.setLocalDescription(offer);
-          fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp});
-        } catch(e) {}
-      }
-    }
-    // Оферрор: если есть пир в presence без соединения — сразу переотправляем оффер
-    // (покрывает кейс когда телефон спал и пропустил все офферы)
-    if (gestureReady) {
-      for (const uid of Object.keys(presence)) {
-        if (uid === myUid || myUid >= uid) continue;
-        const peer = peers[uid];
-        const state = peer ? peer.pc.iceConnectionState : 'none';
-        if (state !== 'connected' && state !== 'completed' && state !== 'checking') {
-          dbg('visibility→sendOffer', uid.slice(0,6)+' was='+state);
-          if (peer) dropPeer(uid);
-          sendOffer(uid);
-        }
-      }
-    }
-  });
-
-  // ── WebRTC ────────────────────────────────────────────────────────────────
-
-  // audioCtx и getAudioCtx — на уровне модуля (разблокированы через сплэш)
-  const peerNodes = {};
-  const VOLUME = 3;
-
-  function playViaCtx(remoteUid, stream) {
-    if (!audioCtx || audioCtx.state !== 'running') return false;
-    if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} }
-    const src = audioCtx.createMediaStreamSource(stream);
-    const gain = audioCtx.createGain();
-    gain.gain.value = muted ? 0 : VOLUME;
-    const comp = audioCtx.createDynamicsCompressor();
-    comp.threshold.value = -24; comp.knee.value = 30;
-    comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
-    src.connect(gain); gain.connect(comp); comp.connect(audioCtx.destination);
-    peerNodes[remoteUid] = gain;
-    dbg('ctx-play', remoteUid.slice(0,6)+' vol='+VOLUME);
-    return true;
-  }
-
-  function tryPlayAll() {
-    document.querySelectorAll('audio').forEach(a => {
-      if (a.srcObject) {
-        a.muted = true;
-        a.play().then(() => {
-          a.muted = muted;
-          hideAudioUnlock();
-        }).catch(e => dbg('tryplay-fail', String(e)));
-      }
-    });
-  }
-  // Регистрируем глобально — сплэш вызовет их после gesture
-  window._tryPlayAll = tryPlayAll;
-
-  // OPEN_MODE: запускаем микрофон после gesture — автоматически, как в видеозвонках
-  async function openModeStart() {
-    try {
-      const s = await acquireStream();
-      s.getAudioTracks().forEach(t => t.enabled = true);
-      talking = true;
-      if(presence[myUid]) presence[myUid].speaking = true;
-      // Обновляем трек у всех уже существующих соединений
-      const track = s.getAudioTracks()[0];
-      for (const [uid, {pc}] of Object.entries(peers)) {
-        pc.getSenders().forEach(snd => {
-          if (!snd.track || snd.track.kind === 'audio') snd.replaceTrack(track).catch(()=>{});
+  // ── PTT ───────────────────────────────────────────────────────────────────
+  function startTalk(e) {
+    if (e) e.preventDefault();
+    if (someoneElseTalking()) return;
+    if (talking) return;
+    talking = true;
+    localStream.getAudioTracks().forEach(t => t.enabled = true);
+    // Ensure all existing senders get the live track
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (audioTrack) {
+      for (const {pc} of Object.values(peers)) {
+        pc.getSenders().forEach(s => {
+          if (s.track && s.track.kind === 'audio') s.replaceTrack(audioTrack).catch(()=>{});
         });
       }
-      // Обновляем вид кнопки — она теперь мьют-кнопка
-      tbtn.querySelector('.blbl').textContent = 'MIC';
-      $('m-hint').textContent = HINT_IDLE; // "Нажми чтобы замолчать"
-      fbPut(room, 'talking/'+myUid, true);
-      dbg('open-mic-start', '');
-      renderList();
-    } catch(e) { toast('Нет доступа к микрофону'); }
+    }
+    fbPut(room, 'talking/'+myUid, true);
+    renderList();
+    updateTalkBtn();
+    dbg('talk-start','');
   }
 
-  window._onGestureReady = () => {
-    // Отправляем офферы которые пришли до gesture (другой уже в комнате когда открыл приложение)
-    dbg('gesture-ready', 'pending='+pendingOfferUIDs.size);
-    pendingOfferUIDs.forEach(uid => { if (presence[uid]) sendOffer(uid); });
-    pendingOfferUIDs.clear();
-    if (OPEN_MODE) openModeStart();
-  };
+  function stopTalk(e) {
+    if (e) e.preventDefault();
+    if (!talking) return;
+    talking = false;
+    localStream.getAudioTracks().forEach(t => t.enabled = false);
+    fbDel(room, 'talking/'+myUid);
+    renderList();
+    updateTalkBtn();
+    dbg('talk-stop','');
+  }
 
+  // Desktop
+  tbtn.addEventListener('mousedown', startTalk);
+  window.addEventListener('mouseup',  stopTalk);
+
+  // Mobile
+  tbtn.addEventListener('touchstart',    startTalk, {passive:false});
+  window.addEventListener('touchend',    stopTalk,  {passive:false});
+  window.addEventListener('touchcancel', stopTalk,  {passive:false});
+
+  // ── WebRTC ────────────────────────────────────────────────────────────────
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
     const pc = new RTCPeerConnection({iceServers: ICE_SERVERS});
-    peers[remoteUid] = {pc, iceTx:0};
+    peers[remoteUid] = {pc, iceTx:0, offerSentAt:0, disconnectTimer:null};
 
+    // Add local audio track (muted via track.enabled; still in sender)
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    // Incoming audio → hidden <audio> element
+    const incomingStream = new MediaStream();
     pc.ontrack = ({track, streams}) => {
-      dbg('ontrack', `${remoteUid.slice(0,6)} kind=${track.kind} state=${track.readyState}`);
-      const stream = (streams && streams[0]) ? streams[0] : new MediaStream([track]);
-      let a = document.getElementById('a-'+remoteUid);
-      if (!a) {
-        a = new Audio(); a.id = 'a-'+remoteUid; a.autoplay = true;
-        a.setAttribute('playsinline', 'true');
-        a.setAttribute('webkit-playsinline', 'true');
-        document.body.appendChild(a);
+      dbg('ontrack', remoteUid.slice(0,6)+' kind='+track.kind);
+      if (track.kind !== 'audio') return;
+      const s = (streams && streams[0]) ? streams[0] : incomingStream;
+      if (!incomingStream.getTracks().includes(track)) incomingStream.addTrack(track);
+      let audio = $('audio-'+remoteUid);
+      if (!audio) {
+        audio = document.createElement('audio');
+        audio.id = 'audio-'+remoteUid;
+        audio.autoplay = true;
+        audio.setAttribute('playsinline','');
+        document.body.appendChild(audio);
       }
-      a.srcObject = stream;
-      a.muted = true;
-      a.play().then(() => {
-        a.muted = muted;
-        hideAudioUnlock();
-        dbg('play-ok', remoteUid.slice(0,6));
-      }).catch(e => {
-        dbg('play-fail', String(e));
-        showAudioUnlock();
-
-        const retryPlay = (ev) => {
-          dbg('play-retry', remoteUid.slice(0,6)+' on='+ev.type);
-          a.muted = true;
-          a.play()
-            .then(() => { a.muted = muted; hideAudioUnlock(); dbg('play-retry-ok', remoteUid.slice(0,6)); })
-            .catch(e2 => dbg('play-retry-fail', String(e2)));
-        };
-        ['click','touchstart','keydown'].forEach(ev =>
-          document.addEventListener(ev, retryPlay, {once:true, passive:true})
-        );
-      });
+      if (audio.srcObject !== s) audio.srcObject = s;
+      audio.play().catch(()=>{});
     };
 
     pc.onicecandidate = ({candidate}) => {
-      if(!candidate) return;
-      if(candidate.type==='relay') dbg('ICE-relay✓', candidate.relatedAddress+' via '+candidate.address);
+      if (!candidate) return;
+      if (candidate.type==='relay') dbg('ICE-relay✓', candidate.address);
       const idx = peers[remoteUid].iceTx++;
-      fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
+      fbPut(room, 'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
     };
 
-    pc.oniceconnectionstatechange = () => {
-      dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
-    };
+    pc.oniceconnectionstatechange = () => dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
 
-    // Восстановление соединения при разрыве
     pc.onconnectionstatechange = async () => {
       dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
-      if (peers[remoteUid] && peers[remoteUid].disconnectTimer) {
-        clearTimeout(peers[remoteUid].disconnectTimer);
-        peers[remoteUid].disconnectTimer = null;
-      }
+      const p = peers[remoteUid]; if (!p) return;
+      if (p.disconnectTimer) { clearTimeout(p.disconnectTimer); p.disconnectTimer=null; }
+
       if (pc.connectionState === 'failed') {
-        // Только оферрор (myUid < remoteUid) вправе инициировать или перезапускать
         if (myUid < remoteUid && pc.signalingState === 'stable') {
           try {
-            const offer = await pc.createOffer({iceRestart:true});
-            await pc.setLocalDescription(offer);
-            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
-            dbg('ICE-restart→sent', remoteUid.slice(0,6));
-            if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
-          } catch(e) {}
+            const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+            fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'offer',sdp:o.sdp,ts:Date.now()});
+          } catch(e) { dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid); }
         } else {
-          dbg('conn-fail-reset', remoteUid.slice(0,6));
-          dropPeer(remoteUid);
-          // Только оферрор переотправляет; answerer ждёт входящего offer
-          if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
+          dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid);
         }
       } else if (pc.connectionState === 'disconnected') {
-        if (peers[remoteUid]) {
-          peers[remoteUid].disconnectTimer = setTimeout(async () => {
-            if (!peers[remoteUid] || peers[remoteUid].pc !== pc) return;
-            if (pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
-            if (myUid < remoteUid && pc.signalingState === 'stable') {
-              // Оферрор: ICE restart на существующем PC — трек и audio сохраняются, звук не прерывается
-              try {
-                dbg('ICE-restart→', remoteUid.slice(0,6));
-                const offer = await pc.createOffer({iceRestart:true});
-                await pc.setLocalDescription(offer);
-                fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
-                if (peers[remoteUid]) peers[remoteUid].offerSentAt = Date.now();
-              } catch(e) {
-                dbg('ICE-restart-err→reset', String(e).slice(0,40));
-                dropPeer(remoteUid);
-                if (presence[remoteUid]) sendOffer(remoteUid);
-              }
-            } else {
-              // Answerer или non-stable: полный reset; answerer ждёт нового offer от оферрора
-              dbg('disconnect-timeout→reset', remoteUid.slice(0,6));
-              dropPeer(remoteUid);
-              if (presence[remoteUid] && myUid < remoteUid) sendOffer(remoteUid);
-              else if (presence[remoteUid]) dbg('disconnect-wait-offer', remoteUid.slice(0,6));
-            }
-          }, 2000);
-        }
+        p.disconnectTimer = setTimeout(async () => {
+          const pp=peers[remoteUid]; if (!pp||pp.pc!==pc) return;
+          if (pc.connectionState!=='disconnected'&&pc.connectionState!=='failed') return;
+          if (myUid < remoteUid && pc.signalingState === 'stable') {
+            try {
+              const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+              fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'offer',sdp:o.sdp,ts:Date.now()});
+              pp.offerSentAt=Date.now();
+            } catch(e) { dropPeer(remoteUid); if(presence[remoteUid]) sendOffer(remoteUid); }
+          } else {
+            dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid);
+          }
+        }, 2000);
       }
     };
 
-    fbListen(room,'ice/'+remoteUid+'/'+myUid,(path,data)=>{
-      if(path==='/'){ if(data) Object.values(data).forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{})); return; }
-      if(data) pc.addIceCandidate(new RTCIceCandidate(data)).catch(()=>{});
+    // ICE from remote
+    fbListen(room, 'ice/'+remoteUid+'/'+myUid, (path, data) => {
+      if (path==='/') { if(data) Object.values(data).forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{})); return; }
+      if (data) pc.addIceCandidate(new RTCIceCandidate(data)).catch(()=>{});
     });
 
-    // DataChannel keepalive: отправляем данные каждые 8с чтобы TURN биндинг не истекал (~13с timeout)
-    const setupKeepalive = (dc) => {
-      let kInterval = null;
-      dc.onopen = () => {
-        kInterval = setInterval(() => {
-          if (dc.readyState === 'open') try { dc.send('k'); } catch(_) {}
-        }, 8000);
-        dbg('ka-open', remoteUid.slice(0,6));
-      };
-      dc.onclose = () => { if (kInterval) { clearInterval(kInterval); kInterval = null; } dbg('ka-close', remoteUid.slice(0,6)); };
+    // DataChannel keepalive
+    const kaSetup = dc => {
+      let ki=null;
+      dc.onopen  = ()=>{ ki=setInterval(()=>{ if(dc.readyState==='open') try{dc.send('k');}catch(_){} },8000); dbg('ka-open',remoteUid.slice(0,6)); };
+      dc.onclose = ()=>{ if(ki){clearInterval(ki);ki=null;} };
     };
-    if (myUid < remoteUid) {
-      setupKeepalive(pc.createDataChannel('ka'));
-    } else {
-      pc.ondatachannel = ({channel}) => setupKeepalive(channel);
-    }
+    if (myUid < remoteUid) kaSetup(pc.createDataChannel('ka'));
+    else pc.ondatachannel = ({channel}) => kaSetup(channel);
 
     return pc;
   }
 
-  const SESSION_START = Date.now();
-
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
-    const isNewPC = !peers[remoteUid]; // проверяем ДО makePC
     const pc = await makePC(remoteUid);
     peers[remoteUid].offerSentAt = Date.now();
-    if (isNewPC) {
-      // В OPEN_MODE сразу добавляем трек если уже есть стрим; иначе обычный transceiver
-      const openTrack = (OPEN_MODE && localStream) ? localStream.getAudioTracks()[0] : null;
-      if (openTrack && openTrack.readyState === 'live') {
-        pc.addTransceiver(openTrack, {direction:'sendrecv'});
-      } else {
-        pc.addTransceiver('audio', {direction:'sendrecv'}); // только при создании нового PC, иначе senders=2
-      }
-    }
     const offer = await pc.createOffer();
     const sdp = offer.sdp
-      .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
-      .replace(/\r\na=inactive/g, '\r\na=sendrecv');
-    await pc.setLocalDescription({type:'offer', sdp});
-    fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp,ts:Date.now()});
+      .replace(/\r\na=sendonly/g,'\r\na=sendrecv')
+      .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+    await pc.setLocalDescription({type:'offer',sdp});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'offer',sdp,ts:Date.now()});
   }
 
   async function handleOffer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 90000 || data.ts < SESSION_START - 5000)) { dbg('offer-ignored stale age='+Math.round((Date.now()-data.ts)/1000)+'s', remoteUid.slice(0,6)); return; }
-    // Строгое разделение ролей: кто с меньшим UID — всегда offerer, никогда не принимает чужие offer.
-    // Это предотвращает сброс DTLS-рукопожатия когда другая сторона присылает offer одновременно.
-    if (myUid < remoteUid) {
-      dbg('offer-ignored offerer-role', remoteUid.slice(0,6));
-      return;
+    if (data.ts && (Date.now()-data.ts>90000 || data.ts<SESSION_START-5000)) {
+      dbg('offer-stale', remoteUid.slice(0,6)+'  age='+Math.round((Date.now()-data.ts)/1000)+'s'); return;
     }
-    const existingP = peers[remoteUid];
-    if (existingP) {
-      const ice = existingP.pc.iceConnectionState;
-      if (ice === 'connected' || ice === 'completed') {
-        dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return;
-      }
+    if (myUid < remoteUid) { dbg('offer-ignored offerer-role', remoteUid.slice(0,6)); return; }
+    const ep = peers[remoteUid];
+    if (ep) {
+      const ice=ep.pc.iceConnectionState;
+      if (ice==='connected'||ice==='completed') { dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return; }
     }
     dbg('handleOffer←', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     try {
-      if(pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
-      if(pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState, remoteUid.slice(0,6)); return; }
+      if (pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
+      if (pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState, remoteUid.slice(0,6)); return; }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
-      pc.getTransceivers().forEach(tc => {
-        if (tc.receiver.track && tc.receiver.track.kind === 'audio') {
-          try { tc.direction = 'sendrecv'; } catch(_) {}
-        }
-      });
       const ans = await pc.createAnswer();
       const sdp = ans.sdp
-        .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
-        .replace(/\r\na=inactive/g, '\r\na=sendrecv');
-      await pc.setLocalDescription({type:'answer', sdp});
-      fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'answer',sdp,ts:Date.now()});
+        .replace(/\r\na=recvonly/g,'\r\na=sendrecv')
+        .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+      await pc.setLocalDescription({type:'answer',sdp});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'answer',sdp,ts:Date.now()});
       dbg('answer→sent', remoteUid.slice(0,6));
     } catch(e) { dbg('handleOffer-ERR', String(e)); }
   }
 
   async function handleAnswer(remoteUid, data) {
-    if (data.ts && (Date.now() - data.ts > 90000 || data.ts < SESSION_START - 5000)) { dbg('answer-ignored stale age='+Math.round((Date.now()-data.ts)/1000)+'s', remoteUid.slice(0,6)); return; }
-    dbg('handleAnswer←', remoteUid.slice(0,6));
-    const p = peers[remoteUid];
-    if(!p || p.pc.signalingState==='stable') return;
-    try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); } catch(e) {}
+    if (data.ts && (Date.now()-data.ts>90000 || data.ts<SESSION_START-5000)) return;
+    const p=peers[remoteUid];
+    if (!p||p.pc.signalingState==='stable') return;
+    try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); dbg('answer-applied',remoteUid.slice(0,6)); }
+    catch(e) { dbg('handleAnswer-ERR', String(e)); }
   }
 
-  function dropPeer(remoteUid) {
-    if (peers[remoteUid]) {
-      if (peers[remoteUid].disconnectTimer) clearTimeout(peers[remoteUid].disconnectTimer);
-      try{peers[remoteUid].pc.close();}catch(_){}
-      delete peers[remoteUid];
+  function dropPeer(uid) {
+    const p=peers[uid];
+    if (p) {
+      if (p.disconnectTimer) clearTimeout(p.disconnectTimer);
+      try{p.pc.close();}catch(_){}
+      delete peers[uid];
     }
-    // Не удаляем audio-элемент — только сбрасываем srcObject.
-    // ontrack новой сессии переиспользует элемент (иначе при glare ontrack не срабатывает).
-    const a = document.getElementById('a-'+remoteUid);
-    if (a) a.srcObject = null;
-    if (peerNodes[remoteUid]) { try{peerNodes[remoteUid].disconnect();}catch(_){} delete peerNodes[remoteUid]; }
+    const audio = $('audio-'+uid);
+    if (audio) audio.remove();
+    dbg('dropPeer', uid.slice(0,6));
   }
 
-  // ── Очистка мусора от прошлой сессии ─────────────────────────────────────
-  try {
-    await Promise.all([
-      fbDel(room,'signals/'+myUid),
-      fbDel(room,'ice/'+myUid),
-      fbDel(room,'talking/'+myUid),
-    ]);
-  } catch(e) {}
+  // ── Presence ──────────────────────────────────────────────────────────────
+  presence[myUid] = {name:myName, speaking:false};
+  await Promise.all([
+    fbDel(room,'signals/'+myUid),
+    fbDel(room,'ice/'+myUid),
+    fbDel(room,'talking/'+myUid),
+  ]).catch(()=>{});
 
-  // ── Presence ─────────────────────────────────────────────────────────────
-  presence[myUid] = {name:currentMyName, speaking:false};
-  dbg('registered', 'uid='+myUid.slice(0,6)+' room='+room);
-  fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START}).then(()=>{
-    // Firebase точно доступен сразу после успешного PUT — читаем users и signals немедленно
-    dbg('registered-ok', 'bootstrap fetch');
+  fbPut(room,'users/'+myUid, {name:myName,ts:Date.now(),sid:SESSION_START}).then(()=>{
+    dbg('registered-ok','bootstrap fetch');
     fetch(fbUrl(room,'users')).then(r=>r.json()).then(data=>{
       if(data){ dbg('bootstrap-users', Object.keys(data).length+''); onUsers('/',data); }
     }).catch(()=>{});
     fetch(fbUrl(room,'signals/'+myUid)).then(r=>r.json()).then(data=>{
-      if(data){ dbg('bootstrap-signals', ''); onSignals('/',data); }
+      if(data){ dbg('bootstrap-signals',''); onSignals('/',data); }
     }).catch(()=>{});
   }).catch(()=>{});
 
   function onLeave() {
-    fetch(fbUrl(room,'users/'+myUid),{method:'DELETE',keepalive:true});
-    fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
+    fetch(fbUrl(room,'users/'+myUid),   {method:'DELETE',keepalive:true});
+    fetch(fbUrl(room,'talking/'+myUid), {method:'DELETE',keepalive:true});
   }
   window.addEventListener('beforeunload', onLeave);
-  window.addEventListener('pagehide', onLeave);
+  window.addEventListener('pagehide',     onLeave);
 
-  const doHeartbeat = () => fbPut(room,'users/'+myUid,{name:currentMyName,ts:Date.now(),sid:SESSION_START});
+  const doHeartbeat = () => fbPut(room,'users/'+myUid, {name:myName,ts:Date.now(),sid:SESSION_START});
   setInterval(doHeartbeat, 8000);
 
-  // ── Детектор ушедших участников ──────────────────────────────────────────
-  const lastSeen = {};
+  // Stale peer cleanup
   setInterval(() => {
-    const now = Date.now();
-    let changed = false;
-    Object.keys(lastSeen).forEach(uid => {
-      if (now - lastSeen[uid] > 28000) {
+    const now=Date.now();
+    Object.keys(lastSeen).forEach(uid=>{
+      if (now-lastSeen[uid]>28000) {
         fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
+        if (presence[uid]) presence[uid].speaking=false;
         delete presence[uid]; delete peerSids[uid]; delete lastSeen[uid];
-        dropPeer(uid); changed = true;
+        dropPeer(uid);
+        renderList(); updateTalkBtn();
       }
     });
-    if (changed) renderList();
   }, 8000);
 
-  async function cleanGhosts() {
-    let all;
-    try { const res = await fetch(fbUrl(room,'users')); all = await res.json(); } catch(e){ return; }
-    if (!all) return;
-    Object.entries(all).forEach(([uid, data]) => {
-      if (uid === myUid) return;
-      if (!data || !data.name) {
-        fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
-        delete presence[uid]; delete lastSeen[uid]; dropPeer(uid);
-      }
-    });
-    renderList();
-  }
-  cleanGhosts();
-  setInterval(cleanGhosts, 60000);
-
-  // ── Слушатели Firebase ────────────────────────────────────────────────────
-  const peerSids = {};
-
-  // Именованные колбэки — используются и в fbListen, и в bootstrap-фетче
-  function onUsers(path,data){
+  // ── Firebase listeners ────────────────────────────────────────────────────
+  function onUsers(path, data) {
     const proc=(uid,d)=>{
-      if(uid===myUid)return;
-      if(!d || !d.name){
-        if(d && !d.name) { fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid); }
+      if (uid===myUid) return;
+      if (!d||!d.name) {
+        if (presence[uid]) presence[uid].speaking=false;
         delete presence[uid]; delete peerSids[uid]; dropPeer(uid);
+        renderList(); updateTalkBtn(); return;
+      }
+      const isStale    = d.sid && peerSids[uid] && d.sid < peerSids[uid];
+      if (isStale) { dbg('stale-ignored',uid.slice(0,6)); return; }
+      const sidChanged = d.sid && peerSids[uid] && d.sid > peerSids[uid];
+      if (sidChanged) { dropPeer(uid); delete presence[uid]; }
+      if (d.sid) peerSids[uid]=d.sid;
+      lastSeen[uid]=Date.now();
+
+      if (!presence[uid]) {
+        presence[uid]={name:d.name,speaking:false};
+        renderList(); updateTalkBtn();
+        if (myUid<uid) sendOffer(uid);
       } else {
-        // sidChanged = только если новый sid БОЛЬШЕ (пир реально перезагрузился).
-        // Если новый sid МЕНЬШЕ — протухшая запись из старой сессии, игнорируем.
-        const isStale    = d.sid && peerSids[uid] && d.sid < peerSids[uid];
-        if (isStale) { dbg('SSE-stale-ignored', uid.slice(0,6)); return; }
-        const sidChanged = d.sid && peerSids[uid] && d.sid > peerSids[uid];
-        if (sidChanged) { dropPeer(uid); delete presence[uid]; }
-        if (d.sid) peerSids[uid] = d.sid;
-        lastSeen[uid] = Date.now();
-        if (!presence[uid]) {
-          presence[uid]={name:d.name,speaking:false};
-          if(myUid<uid) {
-            if (gestureReady) {
-              sendOffer(uid);
-            } else {
-              // Gesture ещё не было (пользователь ещё не кликнул splash).
-              // Откладываем offer — ontrack придёт ПОСЛЕ gesture → play() не упадёт.
-              dbg('offer-deferred', uid.slice(0,6));
-              pendingOfferUIDs.add(uid);
-            }
-          }
-          // answerer (myUid > uid) просто ждёт offer от оферрора — никакого fallback,
-          // иначе оба создают have-local-offer и попадают в неразрешимый glare
-        } else {
-          presence[uid].name = d.name;
-          // Если оферрор и offer завис без ответа >8с — переотправляем
-          if (myUid < uid) {
-            if (!peers[uid]) {
-              if (gestureReady) {
-                dbg('offer-failsafe', uid.slice(0,6)+' no PC, resend');
-                sendOffer(uid);
-              } else {
-                pendingOfferUIDs.add(uid); // будет отправлен из gesture-ready
-              }
-            } else {
-              const pc = peers[uid].pc;
-              const age = Date.now() - (peers[uid].offerSentAt || 0);
-              if (pc.signalingState === 'have-local-offer' && age > 8000) {
-                dbg('offer-timeout→retry', uid.slice(0,6)+' age='+(age/1000|0)+'s');
-                dropPeer(uid);
-                delete presence[uid];
-                presence[uid]={name:d.name,speaking:false};
-                sendOffer(uid);
-              }
+        presence[uid].name=d.name;
+        renderList();
+        if (myUid<uid) {
+          if (!peers[uid]) { sendOffer(uid); }
+          else {
+            const age=Date.now()-(peers[uid].offerSentAt||0);
+            if (peers[uid].pc.signalingState==='have-local-offer' && age>8000) {
+              dropPeer(uid); presence[uid]={name:d.name,speaking:false}; sendOffer(uid);
             }
           }
         }
       }
     };
-    if(path==='/'){if(data)Object.entries(data).forEach(([uid,d])=>proc(uid,d));}
-    else proc(path.slice(1),data);
-    renderList();
-    if(!talking || OPEN_MODE){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
-  }
-
-  function onSignals(path,data){
-    const proc=(fromUid,sig)=>{ if(!sig)return; if(sig.type==='offer')handleOffer(fromUid,sig); if(sig.type==='answer')handleAnswer(fromUid,sig); };
-    if(path==='/'){if(data)Object.entries(data).forEach(([uid,s])=>proc(uid,s));}
+    if (path==='/') { if(data) Object.entries(data).forEach(([uid,d])=>proc(uid,d)); }
     else proc(path.slice(1),data);
   }
 
-  fbListen(room,'users', onUsers, {pollMs:15000}); // polling-фоллбэк для users если SSE умерла (iOS-проблема)
-  fbListen(room,'signals/'+myUid, onSignals, {pollMs:10000}); // polling-фоллбэк для signals если SSE умерла
-
-  fbListen(room,'talking',(path,data)=>{
-    const proc=(uid,val)=>{ if(uid===myUid)return; if(presence[uid])presence[uid].speaking=!!val; };
-    if(path==='/'){if(data)Object.entries(data).forEach(([uid,v])=>proc(uid,v));}
+  function onSignals(path, data) {
+    const proc=(fromUid,sig)=>{
+      if(!sig) return;
+      if (sig.type==='offer')  handleOffer(fromUid,sig);
+      if (sig.type==='answer') handleAnswer(fromUid,sig);
+    };
+    if (path==='/') { if(data) Object.entries(data).forEach(([uid,s])=>proc(uid,s)); }
     else proc(path.slice(1),data);
+  }
+
+  fbListen(room, 'users',          onUsers,   {pollMs:15000});
+  fbListen(room, 'signals/'+myUid, onSignals, {pollMs:10000});
+
+  fbListen(room, 'talking', (path, data) => {
+    if (path === '/') {
+      // Full snapshot — reset remote speaking states first
+      Object.keys(presence).forEach(uid => {
+        if (uid !== myUid && presence[uid]) presence[uid].speaking = false;
+      });
+      if (data) Object.entries(data).forEach(([uid, val]) => {
+        if (uid !== myUid && presence[uid]) presence[uid].speaking = !!val;
+      });
+    } else {
+      const uid = path.slice(1);
+      if (uid !== myUid && presence[uid]) presence[uid].speaking = !!data;
+    }
     renderList();
-    if(!talking || OPEN_MODE){ const sp=Object.entries(presence).find(([uid,p])=>uid!==myUid&&p.speaking); setStatus(sp?sp[1].name+' говорит…':'Онлайн: '+Object.keys(presence).length+' чел.'); }
+    updateTalkBtn();
+  }, {pollMs:5000});
+
+  // ── Visibility recovery ───────────────────────────────────────────────────
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    doHeartbeat(); setTimeout(doHeartbeat, 3000);
+    document.querySelectorAll('audio').forEach(a => {
+      if (a.srcObject && a.paused) a.play().catch(()=>{});
+    });
+    for (const [uid, {pc}] of Object.entries(peers)) {
+      if ((pc.connectionState==='failed'||pc.connectionState==='disconnected')
+          && pc.signalingState==='stable' && myUid<uid) {
+        try {
+          const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+          fbPut(room,'signals/'+uid+'/'+myUid, {type:'offer',sdp:o.sdp,ts:Date.now()});
+        } catch(e){}
+      }
+    }
   });
 
-  tbtn.disabled=false;
-  if (OPEN_MODE) {
-    // В OPEN_MODE кнопка становится мьютом микрофона, не PTT
-    tbtn.querySelector('.blbl').textContent = 'MIC';
-    $('m-hint').textContent = 'Нажми чтобы замолчать';
-    // В debug-режиме gesture уже выдан — стартуем микрофон сразу
-    if (gestureReady) openModeStart();
-  } else {
-    $('m-hint').textContent = 'Удерживай кнопку чтобы говорить';
-  }
+  // Initial render
   renderList();
-  setStatus('Подключение...');
-
-  const HINT_IDLE = OPEN_MODE ? 'Нажми чтобы замолчать' : 'Удерживай кнопку чтобы говорить';
-  const HINT_TALK = OPEN_MODE ? 'Нажми чтобы включить микрофон' : 'Отпусти, чтобы замолчать';
-
-  // ── PTT / Open-mode ──────────────────────────────────────────────────────
-  async function startTalk() {
-    if(talking||tbtn.disabled)return;
-    tryPlayAll(); // вызываем ДО await — пока ещё активен контекст пользовательского жеста (iOS autoplay)
-    try {
-      const s = await acquireStream();
-      s.getAudioTracks().forEach(t => t.enabled = true);
-      const audioTrack = s.getAudioTracks()[0];
-      const peerCount = Object.keys(peers).length;
-      dbg('startTalk', 'peers='+peerCount+' track='+audioTrack.readyState+' en='+audioTrack.enabled);
-      for (const [remoteUid, {pc}] of Object.entries(peers)) {
-        const senders = pc.getSenders();
-        const ice = pc.iceConnectionState;
-        dbg('talk-peer', remoteUid.slice(0,6)+' ice='+ice+' senders='+senders.length+' sig='+pc.signalingState);
-        senders.forEach((snd,i)=>dbg('  sender'+i, (snd.track?snd.track.kind+'/'+snd.track.readyState+'/en='+snd.track.enabled:'null')));
-        const sender = senders.find(snd => !snd.track || snd.track.kind === 'audio');
-        if (sender) {
-          dbg('replaceTrack→', remoteUid.slice(0,6)+' hadTrack='+(sender.track?sender.track.readyState:'null'));
-          sender.replaceTrack(audioTrack)
-            .then(()=>dbg('replaceTrack-ok', remoteUid.slice(0,6)))
-            .catch(e=>dbg('replaceTrack-ERR',String(e)));
-        } else {
-          dbg('addTrack→', remoteUid.slice(0,6)+' (no sender found)');
-          pc.addTrack(audioTrack, s);
-          if (pc.signalingState === 'stable') {
-            try {
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:offer.sdp,ts:Date.now()});
-              dbg('addTrack-offer→sent', remoteUid.slice(0,6));
-            } catch(e) { dbg('addTrack-offer-ERR',String(e)); }
-          }
-        }
-      }
-      tryPlayAll(); // повторный вызов — на случай если ontrack пришёл пока ждали acquireStream
-      talking=true; tbtn.classList.add('pressing'); $('m-hint').textContent=HINT_TALK;
-      setStatus('Ты говоришь…',true); if(presence[myUid])presence[myUid].speaking=true; renderList();
-      fbPut(room,'talking/'+myUid,true);
-    } catch(e){ toast('Нет доступа к микрофону'); }
-  }
-
-  function stopTalk() {
-    if(!talking)return;
-    if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=false);
-    talking=false; tbtn.classList.remove('pressing'); $('m-hint').textContent=HINT_IDLE;
-    if(presence[myUid])presence[myUid].speaking=false; renderList();
-    fbDel(room,'talking/'+myUid); setStatus('Онлайн: '+Object.keys(presence).length+' чел.');
-  }
-
-  if (OPEN_MODE) {
-    // OPEN_MODE: кнопка = мьют/размьют своего микрофона
-    const openToggleMic = (e) => {
-      e.preventDefault();
-      if (!localStream) return; // mic ещё не стартовал
-      const micOn = localStream.getAudioTracks().every(t => t.enabled);
-      localStream.getAudioTracks().forEach(t => t.enabled = !micOn);
-      const nowOn = !micOn;
-      talking = nowOn; // speaking state
-      tbtn.classList.toggle('pressing', !nowOn); // pressing (красный) = замьючен
-      $('m-hint').textContent = nowOn ? HINT_IDLE : HINT_TALK;
-      if(presence[myUid]) presence[myUid].speaking = nowOn;
-      renderList();
-      if (nowOn) fbPut(room,'talking/'+myUid,true);
-      else fbDel(room,'talking/'+myUid);
-      dbg('open-mic-toggle', nowOn?'on':'off');
-    };
-    tbtn.addEventListener('click',     openToggleMic);
-    tbtn.addEventListener('touchend',  openToggleMic, {passive:false});
-  } else {
-    // PTT: удерживать для разговора
-    tbtn.addEventListener('mousedown',  e=>{e.preventDefault();startTalk();});
-    tbtn.addEventListener('touchstart', e=>{e.preventDefault();startTalk();},{passive:false});
-    tbtn.addEventListener('mouseup',    stopTalk);
-    tbtn.addEventListener('touchend',   e=>{e.preventDefault();stopTalk();},{passive:false});
-    tbtn.addEventListener('mouseleave', stopTalk);
-    tbtn.addEventListener('touchcancel',stopTalk);
-  }
-
-  mbtn.addEventListener('click',()=>{
-    muted=!muted; mbtn.textContent=muted?'🔇':'🔊'; mbtn.classList.toggle('muted',muted);
-    document.querySelectorAll('audio').forEach(a=>{ a.muted=muted; });
-    Object.values(peerNodes).forEach(gain=>{ if(gain) gain.gain.value = muted ? 0 : VOLUME; });
-    toast(muted?'Звук выключен':'Звук включён');
-  });
+  updateTalkBtn();
+  dbg('app-started','uid='+myUid.slice(0,6)+' room='+room);
 }
 </script>
 </body>
