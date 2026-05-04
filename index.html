@@ -644,6 +644,8 @@ async function startApp(localStream) {
 
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
+    // Clean stale ICE candidates before new attempt so remote only sees fresh ones
+    fbDel(room, 'ice/'+myUid+'/'+remoteUid);
     const pc = await makePC(remoteUid);
     peers[remoteUid].offerSentAt = Date.now();
     const offer = await pc.createOffer();
@@ -665,6 +667,8 @@ async function startApp(localStream) {
       if (ice==='connected'||ice==='completed') { dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return; }
     }
     dbg('handleOffer←', remoteUid.slice(0,6));
+    // Clean our own stale ICE so offerer only sees fresh candidates from this answer
+    fbDel(room, 'ice/'+myUid+'/'+remoteUid);
     const pc = await makePC(remoteUid);
     try {
       if (pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
@@ -770,7 +774,7 @@ async function startApp(localStream) {
           if (!peers[uid]) { sendOffer(uid); }
           else {
             const age=Date.now()-(peers[uid].offerSentAt||0);
-            if (peers[uid].pc.signalingState==='have-local-offer' && age>8000) {
+            if (peers[uid].pc.signalingState==='have-local-offer' && age>25000) {
               dropPeer(uid); presence[uid]={name:d.name,speaking:false}; sendOffer(uid);
             }
           }
