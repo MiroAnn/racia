@@ -314,6 +314,13 @@ $('m-room').addEventListener('click', () => {
   });
 });
 
+// ── AudioContext (unlocks iOS audio on first gesture) ─────────────────────────
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  return audioCtx;
+}
+
 // ── Debug ─────────────────────────────────────────────────────────────────────
 const DEBUG_MODE = P.get('debug') === '1';
 let dbgLog = [];
@@ -366,6 +373,7 @@ localStorage.setItem('racia_uid', myUid);
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
 async function enterRoom() {
+  try { getAudioCtx().resume(); } catch(_){} // unlock iOS audio session during gesture
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -452,6 +460,11 @@ async function startApp(localStream) {
     if (someoneElseTalking()) return;
     if (talking) return;
     talking = true;
+    // Retry any paused audio — PTT press is a user gesture, best moment to unlock iOS
+    document.querySelectorAll('audio[id^="audio-"]').forEach(a => {
+      if (a.srcObject && a.paused) a.play().catch(()=>{});
+    });
+    try { getAudioCtx().resume(); } catch(_){}
     localStream.getAudioTracks().forEach(t => t.enabled = true);
     // Ensure all existing senders get the live track
     const audioTrack = localStream.getAudioTracks()[0];
@@ -488,6 +501,16 @@ async function startApp(localStream) {
   window.addEventListener('touchend',    stopTalk,  {passive:false});
   window.addEventListener('touchcancel', stopTalk,  {passive:false});
 
+  // Watchdog: retry paused audio every 4s (iOS may pause after screen lock / bg)
+  setInterval(() => {
+    document.querySelectorAll('audio[id^="audio-"]').forEach(a => {
+      if (a.srcObject && a.paused) {
+        dbg('watchdog-resume', a.id);
+        a.play().catch(e => dbg('watchdog-play-err', a.id+' '+String(e)));
+      }
+    });
+  }, 4000);
+
   // ── WebRTC ────────────────────────────────────────────────────────────────
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
@@ -498,22 +521,29 @@ async function startApp(localStream) {
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
     // Incoming audio → hidden <audio> element
-    const incomingStream = new MediaStream();
+    const incomingStreams = {};
     pc.ontrack = ({track, streams}) => {
       dbg('ontrack', remoteUid.slice(0,6)+' kind='+track.kind);
       if (track.kind !== 'audio') return;
-      const s = (streams && streams[0]) ? streams[0] : incomingStream;
-      if (!incomingStream.getTracks().includes(track)) incomingStream.addTrack(track);
+      // Mirror index_v1 pattern: prefer streams[0], fallback to manual MediaStream
+      const s = (streams && streams[0])
+        ? streams[0]
+        : (incomingStreams[remoteUid] || (incomingStreams[remoteUid] = new MediaStream()));
+      incomingStreams[remoteUid] = s;
+      if (!(streams && streams[0]) && !s.getTracks().includes(track)) s.addTrack(track);
+
       let audio = $('audio-'+remoteUid);
       if (!audio) {
         audio = document.createElement('audio');
         audio.id = 'audio-'+remoteUid;
         audio.autoplay = true;
+        audio.playsInline = true; // property (iOS needs this)
         audio.setAttribute('playsinline','');
+        audio.setAttribute('webkit-playsinline','');
         document.body.appendChild(audio);
       }
       if (audio.srcObject !== s) audio.srcObject = s;
-      audio.play().catch(()=>{});
+      audio.play().catch(e => dbg('audio-play-err', remoteUid.slice(0,6)+' '+String(e)));
     };
 
     pc.onicecandidate = ({candidate}) => {
