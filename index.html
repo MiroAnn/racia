@@ -678,7 +678,10 @@ async function startApp(localStream) {
     const ep = peers[remoteUid];
     if (ep) {
       const ice=ep.pc.iceConnectionState;
-      if (ice==='connected'||ice==='completed') { dbg('offer-ignored ice='+ice, remoteUid.slice(0,6)); return; }
+      if (ice==='connected'||ice==='completed') {
+        dbg('offer-reconnect drop+rehandle', remoteUid.slice(0,6));
+        dropPeer(remoteUid);
+      }
     }
     dbg('handleOffer←', remoteUid.slice(0,6));
     // Clean our own stale ICE so offerer only sees fresh candidates from this answer
