@@ -125,6 +125,17 @@
       box-shadow: 0 0 0 10px rgba(100,100,100,.05), 0 4px 14px rgba(0,0,0,.25);
       opacity: .55; cursor: not-allowed;
     }
+    #tbtn.connecting {
+      background: radial-gradient(circle at 38% 35%, #4a9eff, #1a6fd4);
+      box-shadow: 0 0 0 12px rgba(74,158,255,.08), 0 6px 24px rgba(74,158,255,.3),
+                  inset 0 2px 0 rgba(255,255,255,.2);
+      opacity: .7; cursor: not-allowed;
+      animation: conn-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes conn-pulse {
+      0%,100% { opacity: .7; }
+      50%      { opacity: .45; }
+    }
 
     /* ── Splash ── */
     #splash {
@@ -437,14 +448,29 @@ async function startApp(localStream) {
     return Object.entries(presence).some(([uid, p]) => uid !== myUid && p.speaking);
   }
 
+  // True if we have remote peers but none has an active WebRTC connection yet
+  function isConnecting() {
+    const hasPeers = Object.keys(presence).some(uid => uid !== myUid);
+    if (!hasPeers) return false;
+    const hasConnected = Object.values(peers).some(
+      ({pc}) => pc.connectionState === 'connected'
+    );
+    return !hasConnected;
+  }
+
   function updateTalkBtn() {
-    const locked = someoneElseTalking() && !talking;
-    tbtn.classList.toggle('pressing', talking);
-    tbtn.classList.toggle('locked',   locked);
+    const locked      = someoneElseTalking() && !talking;
+    const connecting  = isConnecting() && !talking;
+    tbtn.classList.toggle('pressing',   talking);
+    tbtn.classList.toggle('locked',     locked && !connecting);
+    tbtn.classList.toggle('connecting', connecting);
     const hint = $('m-hint');
     if (talking) {
       hint.textContent = 'Отпусти чтобы замолчать';
       hint.className = 'active';
+    } else if (connecting) {
+      hint.textContent = 'Подключаюсь…';
+      hint.className = 'locked';
     } else if (locked) {
       hint.textContent = 'Эфир занят…';
       hint.className = 'locked';
@@ -458,6 +484,7 @@ async function startApp(localStream) {
   function startTalk(e) {
     if (e) e.preventDefault();
     if (someoneElseTalking()) return;
+    if (isConnecting()) return;   // block until ICE ready
     if (talking) return;
     talking = true;
     // Retry any paused audio — PTT press is a user gesture, best moment to unlock iOS
@@ -560,6 +587,17 @@ async function startApp(localStream) {
       const p = peers[remoteUid]; if (!p) return;
       if (p.disconnectTimer) { clearTimeout(p.disconnectTimer); p.disconnectTimer=null; }
 
+      if (pc.connectionState === 'connected') {
+        // Unblock Talk button now that transport is ready
+        updateTalkBtn();
+        // Retry audio immediately — don't wait for watchdog (fix for reconnect delay)
+        const audio = $('audio-'+remoteUid);
+        if (audio && audio.srcObject && audio.paused) {
+          audio.play().catch(e => dbg('conn-audio-retry-err', remoteUid.slice(0,6)+' '+String(e)));
+          dbg('conn-audio-retry', remoteUid.slice(0,6));
+        }
+      }
+
       if (pc.connectionState === 'failed') {
         if (myUid < remoteUid && pc.signalingState === 'stable') {
           try {
@@ -660,6 +698,7 @@ async function startApp(localStream) {
     const audio = $('audio-'+uid);
     if (audio) audio.remove();
     dbg('dropPeer', uid.slice(0,6));
+    updateTalkBtn(); // re-check connecting state after peer drops
   }
 
   // ── Presence ──────────────────────────────────────────────────────────────
